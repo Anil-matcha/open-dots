@@ -1,0 +1,38 @@
+# Vadoo Autonomous Agent — Web UI
+
+Next.js app that lets someone connect Telegram (or continue as a guest),
+connect Claude, submit tasks, and schedule recurring ones — a browser-based
+alternative to the Telegram bot backed by the same API.
+
+For prerequisites and how to run the whole stack (this app, the backend API,
+and the Telegram bot) with one command, see the
+[repo root README](../README.md). This file covers frontend-specific
+details; scheduling's backend behavior is covered in [Scheduling
+tasks](../README.md#scheduling-tasks) there.
+
+## Layout
+
+- `app/page.tsx` — the four-step wizard (get started → connect Claude →
+  connect GitHub → submit a task).
+- `components/` — one component per step, plus shared `Card`/`Button` bits.
+  `SubmitTask.tsx` covers both one-off tasks and, via its "Repeat this on a
+  schedule" checkbox, recurring ones — the frequency dropdown (hourly/daily/
+  weekdays/weekly) and time picker build a cron expression client-side
+  (`buildCronExpression`) using the browser's own timezone
+  (`Intl.DateTimeFormat().resolvedOptions().timeZone`), then post to
+  `/schedules` instead of `/tasks`. The schedule list below it supports
+  pause/resume/delete.
+- `lib/api.ts` — typed client for the backend's `/api/v1` routes, including
+  `Schedule` and the `*Schedule` calls.
+
+## Running just the frontend
+
+```bash
+cp .env.example .env.local   # set NEXT_PUBLIC_API_BASE_URL if not using defaults
+npm install
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000). The backend API must
+already be running (see `../backend/README.md`) and its `FRONTEND_ORIGINS`
+must include this app's origin, or requests will fail CORS.

@@ -1,0 +1,49 @@
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    BOAT_BASE_URL : str = "https://boat.dev/api/v1"
+    BOAT_API_KEY : str
+    # Boat bills sandbox creation to the caller's personal account unless a
+    # team/org is explicitly attached to the request.
+    BOAT_ORG_ID : str = ""
+
+    POSTGRES_USER: str = "vadoo"
+    POSTGRES_PASSWORD: str = "vadoo"
+    POSTGRES_DB: str = "vadoo"
+    POSTGRES_HOST: str = "localhost"
+    POSTGRES_PORT: int = 5432
+
+    TOKEN_ENCRYPTION_KEYS: str
+
+    TELEGRAM_BOT_TOKEN: str = ""
+    # Shown to web UI users as a clickable t.me/<username> link when linking
+    # their Telegram account. Purely cosmetic — the link flow works without it.
+    TELEGRAM_BOT_USERNAME: str = ""
+
+    # Origin(s) allowed to call this API from a browser (the frontend's dev
+    # server / deployed URL). Comma-separated.
+    FRONTEND_ORIGINS: str = "http://localhost:3000"
+
+    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
+
+    @property
+    def FRONTEND_ORIGIN_LIST(self) -> list[str]:
+        return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def ASYNC_DATABASE_URL(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+    @property
+    def SYNC_DATABASE_URL(self) -> str:
+        return (
+            f"postgresql+psycopg2://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+
+settings = Settings()  # type: ignore

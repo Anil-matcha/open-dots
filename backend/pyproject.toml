@@ -1,0 +1,24 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "alembic>=1.20.0",
+    "asyncpg>=0.31.0",
+    "boat-sdk>=1.0.0",
+    "cryptography>=50.0.1",
+    "fastapi[standard]>=0.141.1",
+    "psycopg2-binary>=2.9.13",
+    "pydantic-settings>=2.15.0",
+    "python-dotenv>=1.2.3",
+    "python-telegram-bot>=22.8",
+    "sqlalchemy[asyncio]>=2.0",
+    "structlog>=26.1.0",
+    "apscheduler>=3.11,<4",
+    "tzdata>=2026.4",
+]
+
+[tool.fastapi]
+entrypoint = "app.main:app"
