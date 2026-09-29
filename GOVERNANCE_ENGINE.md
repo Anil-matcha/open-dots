@@ -218,3 +218,19 @@ work rather than folding into the base governance engine build.
 4. For UI-only connectors with no clean API (screenshot-based
    verification), what confidence threshold triggers a "couldn't verify,
    please check manually" message instead of a false "done"?
+5. Real web-UI authentication. The app already has a user concept
+   (`user_id`, either a Telegram numeric id or a guest id) — every table
+   including the new `permission_rules` table hangs off it — but that id is
+   only actually authenticated on the Telegram side (Telegram's own servers
+   supply it; a client can't fake it). On the web side it's whatever id is
+   sitting in `localStorage`, with no server-side verification, per the
+   original app's "Known limitations." That gap was low-stakes for the
+   original tool but isn't acceptable once permission rules and audit trails
+   are attached to that identity — spoofing `localStorage` would mean
+   inheriting someone else's accumulated "always allow" rules, or reading
+   their history. Doesn't block building the governance engine itself
+   (which only needs a `user_id` to key off, same as every other table), but
+   is a launch-blocker for the open-source product: needs real session/
+   cookie-based auth to replace the web UI's localStorage-trusted identity
+   before this ships publicly. Telegram's side of identification doesn't
+   need to change.

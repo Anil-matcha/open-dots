@@ -62,8 +62,9 @@ echo "==> Starting Postgres (docker compose)"
 docker compose up -d
 
 echo "==> Waiting for Postgres to be healthy"
+POSTGRES_CONTAINER="$(docker compose ps -q postgres)"
 for _ in $(seq 1 30); do
-  status="$(docker inspect --format='{{.State.Health.Status}}' vadoo-postgres 2>/dev/null || echo "starting")"
+  status="$(docker inspect --format='{{.State.Health.Status}}' "$POSTGRES_CONTAINER" 2>/dev/null || echo "starting")"
   [ "$status" = "healthy" ] && break
   sleep 1
 done
