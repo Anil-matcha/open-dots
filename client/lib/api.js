@@ -101,7 +101,7 @@ export async function createBot(botData) {
 }
 
 export async function updateBot(botId, updates) {
-  const res = await apiFetch(`${API_BASE_URL}/bots/${botId}`, {
+  const res = await apiFetch(`${API_BASE_URL}/bots/${encodeURIComponent(botId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
@@ -111,7 +111,7 @@ export async function updateBot(botId, updates) {
 }
 
 export async function deleteBot(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/bots/${botId}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API_BASE_URL}/bots/${encodeURIComponent(botId)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete bot');
   return res.json();
 }
@@ -220,7 +220,7 @@ export async function fetchAuditEvents(limit = 100) {
 }
 
 export function subscribeToChatStream(threadId, model, onEvent, onError) {
-  const url = `${API_BASE_URL}/chat/stream/${threadId}?model=${encodeURIComponent(model)}`;
+  const url = `${API_BASE_URL}/chat/stream/${encodeURIComponent(threadId)}?model=${encodeURIComponent(model)}`;
   let eventSource = null;
   let cancelled = false;
 

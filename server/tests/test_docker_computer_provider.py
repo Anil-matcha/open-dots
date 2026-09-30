@@ -120,6 +120,34 @@ class DockerComputerProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stopped.state, "stopped")
         self.assertIsNone(self.docker.container)
 
+    async def test_recover_rejects_container_with_mismatched_computer_id_label(self):
+        # Container names truncate the computer id to 70 chars, so a foreign
+        # container can theoretically sit behind the expected name. Recovery
+        # must not adopt it: its actions would otherwise run in another bot's
+        # runtime.
+        first_provider = self.provider
+        initial = first_provider.get_or_create("bot-owner")
+        async def ready(_record):
+            return {"status": "healthy"}
+
+        first_provider._wait_until_ready = ready
+        await first_provider.start(initial.computer_id)
+
+        # Simulate the collision: same name, but the label belongs to another bot.
+        self.docker.container["Config"]["Labels"]["open-dots.computer-id"] = "computer-someone-else"
+
+        restarted = DockerComputerProvider(
+            image="open-dots-computer:test",
+            workspace_root=self.root / "computers",
+            seccomp_profile=self.root / "missing-seccomp.json",
+            docker_command=self.docker,
+        )
+        recovered = await restarted.reconcile("bot-owner")
+        self.assertEqual(recovered.state, "stopped")
+        self.assertIsNone(restarted._runtimes.get(recovered.computer_id))
+        # The foreign container is left untouched, never adopted.
+        self.assertIsNotNone(self.docker.container)
+
     async def test_browser_terminal_files_input_and_screenshot_use_scoped_runtime(self):
         status = self.provider.get_or_create("bot-test")
 

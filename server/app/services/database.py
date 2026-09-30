@@ -98,8 +98,30 @@ class Database:
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.path.exists():
+            # Create the file with 0600 from the start so there is no
+            # world-readable window before the chmod below.
+            try:
+                fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                os.close(fd)
         self._migrate()
-        os.chmod(self.path, 0o600)
+        self._restrict_files()
+
+    def _restrict_files(self) -> None:
+        """Keep the database and its WAL sidecars readable only by the owner.
+
+        SQLite creates the -wal/-shm files with the process umask on first
+        write, so they must be restricted explicitly alongside the main file.
+        """
+        for candidate in (self.path, self.path.parent / f"{self.path.name}-wal", self.path.parent / f"{self.path.name}-shm"):
+            try:
+                if candidate.exists():
+                    os.chmod(candidate, 0o600)
+            except OSError:
+                pass
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
@@ -116,6 +138,7 @@ class Database:
             raise
         finally:
             connection.close()
+            self._restrict_files()
 
     def _migrate(self) -> None:
         with self.connect() as connection:

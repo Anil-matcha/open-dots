@@ -191,6 +191,13 @@ class DockerComputerProvider:
             bot_id = labels.get("open-dots.bot-id")
             if not token or not bot_id:
                 return record
+            if labels.get("open-dots.computer-id") != computer_id:
+                # Container names are truncated to 70 characters, so two long
+                # computer ids can theoretically share a name. Never adopt a
+                # container whose label does not match this computer id:
+                # adopting it would steer this bot's actions into another
+                # bot's runtime.
+                return record
             state_info = info.get("State", {}) or {}
             paused = bool(state_info.get("Paused"))
             running = bool(state_info.get("Running"))
