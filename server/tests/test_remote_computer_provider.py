@@ -108,6 +108,17 @@ class RemoteComputerProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.calls[0][0:2], ("POST", "/computers"))
         self.assertIn("/computers/remote-session-1/start", [call[1] for call in provider.calls])
 
+    async def test_cleanup_of_never_created_computer_is_a_noop(self):
+        provider = StubRemoteComputerProvider()
+        status = provider.describe("bot-test")
+        cleaned = await provider.cleanup(status.computer_id)
+        self.assertEqual(cleaned["state"], "cleaned")
+        self.assertEqual(cleaned["computer_id"], status.computer_id)
+        self.assertEqual(provider.calls, [])
+        # Second cleanup stays idempotent.
+        cleaned_again = await provider.cleanup(status.computer_id)
+        self.assertEqual(cleaned_again["state"], "cleaned")
+
     async def test_remote_provider_requires_an_endpoint_and_key(self):
         provider = RemoteComputerProvider(base_url="", api_key="")
         status = provider.get_or_create("bot-test")

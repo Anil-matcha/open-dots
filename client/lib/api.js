@@ -1,8 +1,14 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (
-  typeof window !== 'undefined' && window.location.hostname === 'localhost'
-    ? 'http://localhost:8000/api/v1'
-    : 'http://127.0.0.1:8000/api/v1'
-);
+function defaultApiBaseUrl() {
+  if (typeof window === 'undefined') return 'http://127.0.0.1:8000/api/v1';
+  const { hostname, protocol } = window.location;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    return `${protocol}//${hostname}:8000/api/v1`;
+  }
+  // Non-loopback deployments: never send the session cookie over plaintext HTTP.
+  return `https://${hostname}:8000/api/v1`;
+}
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || defaultApiBaseUrl();
 
 let sessionPromise = null;
 
@@ -302,13 +308,17 @@ export async function fetchComputerStatus(botId) {
 }
 
 export async function fetchComputerHealth(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/health`);
+  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/health`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error('Failed to load computer health');
   return res.json();
 }
 
 export async function fetchComputerScreenshot(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/screenshot`);
+  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/screenshot`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error('Failed to load computer screen state');
   return res.json();
 }

@@ -25,6 +25,10 @@ export default function Dashboard({ onLogout }) {
   const [messages, setMessages] = useState([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [defaultModel, setDefaultModel] = useState('gpt-5-mini');
+  const [isNewBotOpen, setIsNewBotOpen] = useState(false);
+  const [newBotName, setNewBotName] = useState('New Assistant');
+  const [newBotRole, setNewBotRole] = useState('General Intelligence');
+  const [newBotModel, setNewBotModel] = useState('');
   const [userName, setUserName] = useState(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem('open_dots_user_name') || 'You';
@@ -71,24 +75,44 @@ export default function Dashboard({ onLogout }) {
     }
   };
 
-  const handleCreateNewBot = async () => {
-    const name = prompt('Enter Bot Name:', 'New Assistant');
+  const handleCreateNewBot = () => {
+    // In-app modal instead of blocking prompt() dialogs: prompt() is spoofable
+    // by page content and blocked by some browsers.
+    setNewBotName('New Assistant');
+    setNewBotRole('General Intelligence');
+    setNewBotModel(defaultModel);
+    setIsNewBotOpen(true);
+  };
+
+  // Close the New Bot modal with Escape, matching the old prompt() dismissal.
+  useEffect(() => {
+    if (!isNewBotOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsNewBotOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isNewBotOpen]);
+
+  const handleSubmitNewBot = async () => {
+    const name = newBotName.trim();
     if (!name) return;
-    const role = prompt('Enter Role:', 'General Intelligence');
-    const model = prompt('Enter Model:', defaultModel);
+    const role = newBotRole.trim() || 'AI Assistant';
+    const model = newBotModel.trim() || defaultModel;
 
     try {
       const newBot = await createBot({
         name,
-        role: role || 'AI Assistant',
-        model: model || defaultModel,
-        description: `Custom assistant configured to use ${model || defaultModel}.`,
+        role,
+        model,
+        description: `Custom assistant configured to use ${model}.`,
         avatar: '🤖',
         system_prompt: `You are ${name}, a helpful AI assistant.`
       });
       setBots((prev) => [...prev, newBot]);
       setActiveBotId(newBot.id);
       setActiveTab('chat');
+      setIsNewBotOpen(false);
     } catch (err) {
       console.error('Failed to create bot:', err);
     }
@@ -149,6 +173,58 @@ export default function Dashboard({ onLogout }) {
         }}
         onProfileUpdate={(name) => setUserName(name || 'You')}
       />
+
+      {/* New Bot Modal (replaces blocking prompt() dialogs) */}
+      {isNewBotOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setIsNewBotOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-zinc-800 bg-[#121214] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-sm font-semibold text-zinc-100 mb-4">Create new bot</h2>
+            <label htmlFor="new-bot-name" className="block text-xs text-zinc-400 mb-1">Bot name</label>
+            <input
+              id="new-bot-name"
+              value={newBotName}
+              onChange={(e) => setNewBotName(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm mb-3 focus:outline-violet-400"
+            />
+            <label htmlFor="new-bot-role" className="block text-xs text-zinc-400 mb-1">Role</label>
+            <input
+              id="new-bot-role"
+              value={newBotRole}
+              onChange={(e) => setNewBotRole(e.target.value)}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm mb-3 focus:outline-violet-400"
+            />
+            <label htmlFor="new-bot-model" className="block text-xs text-zinc-400 mb-1">Model</label>
+            <input
+              id="new-bot-model"
+              value={newBotModel}
+              onChange={(e) => setNewBotModel(e.target.value)}
+              placeholder={defaultModel}
+              className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm focus:outline-violet-400"
+            />
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => setIsNewBotOpen(false)}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-zinc-300 hover:bg-zinc-800 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSubmitNewBot}
+                disabled={!newBotName.trim()}
+                className="px-4 py-2 rounded-lg text-xs font-semibold bg-violet-600 text-white hover:bg-violet-500 disabled:opacity-40 transition"
+              >
+                Create bot
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

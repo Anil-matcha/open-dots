@@ -21,7 +21,7 @@ class BotDeletionTests(unittest.IsolatedAsyncioTestCase):
         self.storage_patch = patch.object(bots, "storage_service", self.storage)
         self.storage_patch.start()
         self.provider = SimpleNamespace(
-            get_or_create=lambda bot_id: SimpleNamespace(computer_id=bot_id),
+            describe=lambda bot_id: SimpleNamespace(computer_id=bot_id),
             cleanup=AsyncMock(),
         )
         self.provider_patch = patch.object(bots, "computer_provider", self.provider)

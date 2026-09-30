@@ -16,7 +16,7 @@ from app.services.auth_service import auth_service
 
 
 class ResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
-    async def run_provider(self, response, messages=None, wire_api="responses"):
+    async def run_provider(self, response, messages=None, wire_api="responses", model="exact.model-id"):
         self.requests = []
 
         def handler(request):
@@ -33,7 +33,7 @@ class ResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
         with patch("app.services.provider_service.storage_service.get_settings", return_value=config), \
              patch("app.services.provider_service.httpx.AsyncClient", return_value=client):
             return [event async for event in ModelProviderService().stream_chat_completion(
-                "exact.model-id", messages or [{"role": "user", "content": "Hello"}], "Be helpful",
+                model, messages or [{"role": "user", "content": "Hello"}], "Be helpful",
             )]
 
     @staticmethod
@@ -82,6 +82,44 @@ class ResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
                 response = self.sse(*([{"type": terminal}] if terminal else []))
                 events = await self.run_provider(response)
                 self.assertFalse(events[-1]["ok"])
+
+    async def test_malicious_model_slugs_are_rejected_before_any_request(self):
+        # The slug is only interpolated into a URL on the prediction wire
+        # protocol; that is where charset validation applies.
+        for bad in ["..", "a..b", "a/b", "../x", "a?b=1", "a#b", "a b"]:
+            with self.subTest(model=bad):
+                events = await self.run_provider(
+                    httpx.Response(200, json={"outputs": ["Legacy"]}),
+                    wire_api="prediction",
+                    model=bad,
+                )
+                self.assertFalse(events[-1]["ok"])
+                self.assertIn("unsupported characters", events[0]["delta"])
+        self.assertEqual(self.requests, [])
+
+    async def test_model_must_be_in_configured_model_ids(self):
+        config = {
+            "model_api_key": "test-secret",
+            "model_api_base_url": "https://provider.test/v1",
+            "model_api_wire_api": "responses",
+            "model_ids": ["exact.model-id"],
+        }
+        client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: self.sse({"type": "response.completed"}),
+        ))
+        with patch("app.services.provider_service.storage_service.get_settings", return_value=config), \
+             patch("app.services.provider_service.httpx.AsyncClient", return_value=client):
+            service = ModelProviderService()
+            events = [event async for event in service.stream_chat_completion(
+                "other.model", [{"role": "user", "content": "Hello"}], "Be helpful",
+            )]
+            self.assertFalse(events[-1]["ok"])
+            self.assertIn("not in the configured model list", events[0]["delta"])
+            # A listed model still works.
+            events = [event async for event in service.stream_chat_completion(
+                "exact.model-id", [{"role": "user", "content": "Hello"}], "Be helpful",
+            )]
+            self.assertTrue(events[-1]["ok"])
 
     async def test_prediction_protocol_still_works(self):
         events = await self.run_provider(httpx.Response(200, json={"outputs": ["Legacy"]}), wire_api="prediction")

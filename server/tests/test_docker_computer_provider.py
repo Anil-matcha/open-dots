@@ -36,6 +36,14 @@ class FakeDockerCommand:
                     env_index += 2
                 else:
                     env_index += 1
+            # Mirror real docker: --env-file contents land in the container env.
+            if "--env-file" in values:
+                env_file = values[values.index("--env-file") + 1]
+                with open(env_file) as handle:
+                    for line in handle:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            self.container["Config"]["Env"].append(line)
             return "container-test"
         if args[0] == "inspect":
             if self.container is None:

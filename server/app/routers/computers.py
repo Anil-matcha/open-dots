@@ -138,12 +138,12 @@ async def reset_computer(bot_id: str):
     return await _run_action(bot_id, "reset")
 
 
-@router.get("/{bot_id}/health")
+@router.post("/{bot_id}/health")
 async def health_computer(bot_id: str):
     return await _run_action(bot_id, "health")
 
 
-@router.get("/{bot_id}/screenshot")
+@router.post("/{bot_id}/screenshot")
 async def screenshot_computer(bot_id: str):
     return await _run_action(bot_id, "screenshot")
 

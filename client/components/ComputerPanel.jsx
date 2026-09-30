@@ -230,7 +230,7 @@ export default function ComputerPanel({ bot, onBackToChat }) {
                 screen.data ? (
                   <div className="w-full h-full rounded-xl border border-slate-800 bg-black flex items-center justify-center relative overflow-hidden shadow-2xl">
                     <img
-                      src={`data:image/${screen.format || 'jpeg'};base64,${screen.data}`}
+                      src={`data:image/${['jpeg', 'png', 'webp'].includes(screen.format) ? screen.format : 'jpeg'};base64,${screen.data}`}
                       alt={`Computer frame ${screen.frame_id || ''}`}
                       className="max-w-full max-h-full object-contain"
                     />

@@ -69,7 +69,10 @@ async def delete_bot(bot_id: str):
     bots = storage_service.get_bots()
     if not any(bot["id"] == bot_id for bot in bots):
         raise HTTPException(status_code=404, detail="Bot not found")
-    status = computer_provider.get_or_create(bot_id)
+    # Describe-only: the delete path must never provision a runtime record or
+    # workspace directory just to tear it down. cleanup() recovers an existing
+    # container from Docker on its own when needed.
+    status = computer_provider.describe(bot_id)
     try:
         await computer_provider.cleanup(status.computer_id)
     except ComputerProviderError as exc:

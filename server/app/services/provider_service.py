@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 import httpx
 from typing import AsyncGenerator, Dict, Any, List
 from app.config import settings
@@ -39,6 +40,17 @@ class ModelProviderService:
             yield {"type": "turn.completed", "ok": False}
             return
 
+        # When the operator configured an explicit model list, the requested model
+        # must be on it, regardless of wire protocol.
+        configured_model_ids = app_settings.get("model_ids") or []
+        if configured_model_ids and (model or "").strip() not in configured_model_ids:
+            yield {
+                "type": "content.delta",
+                "delta": "The selected model is not in the configured model list."
+            }
+            yield {"type": "turn.completed", "ok": False}
+            return
+
         if app_settings.get("model_api_wire_api") == "responses":
             async for event in self._stream_responses(
                 base_url, api_key, model, messages, system_prompt,
@@ -49,6 +61,14 @@ class ModelProviderService:
 
         # Target EXACT model slug passed by user without any alias remapping or fallback
         target_endpoint = (model or "gpt-5-mini").strip()
+
+        # The slug is interpolated directly into the upstream request URL, so
+        # reject anything that could alter the path or query string (e.g. `/`,
+        # `?`, `#`, `..`).
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", target_endpoint) or ".." in target_endpoint:
+            yield {"type": "content.delta", "delta": "The selected model name contains unsupported characters."}
+            yield {"type": "turn.completed", "ok": False}
+            return
 
         # Extract latest user prompt and image_url
         user_prompt = ""
