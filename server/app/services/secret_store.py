@@ -22,8 +22,15 @@ class SecretStore:
             key = self.key_path.read_bytes().strip()
         else:
             key = Fernet.generate_key()
-            self.key_path.write_bytes(key + b"\n")
-            os.chmod(self.key_path, 0o600)
+            # Create the key file with 0600 from the start: write_bytes()
+            # would leave a brief world-readable window before chmod().
+            fd = os.open(self.key_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            try:
+                with os.fdopen(fd, "wb") as key_file:
+                    key_file.write(key + b"\n")
+            except Exception:
+                os.close(fd)
+                raise
 
         try:
             self._fernet = Fernet(key)

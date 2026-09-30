@@ -252,6 +252,7 @@ class RemoteComputerProvider:
         payload: Optional[Dict[str, Any]] = None,
         *,
         timeout: Optional[float] = None,
+        ok_if_not_found: bool = False,
     ) -> Dict[str, Any]:
         try:
             async with httpx.AsyncClient(
@@ -263,6 +264,10 @@ class RemoteComputerProvider:
             raise ComputerProviderError("Remote computer API did not respond.") from exc
 
         if response.status_code == 204:
+            return {}
+        if response.status_code == 404 and ok_if_not_found:
+            # Idempotent delete: already gone on the remote side is the
+            # desired end state.
             return {}
         try:
             body = response.json()
@@ -491,7 +496,9 @@ class RemoteComputerProvider:
                     "generation": 0,
                 }
             if record.remote_id:
-                await self._request("DELETE", self._remote_path(record.remote_id))
+                await self._request(
+                    "DELETE", self._remote_path(record.remote_id), ok_if_not_found=True
+                )
             self._computers.pop(computer_id, None)
             return {
                 "computer_id": computer_id,

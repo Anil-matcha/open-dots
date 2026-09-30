@@ -121,6 +121,30 @@ class ResponsesProviderTests(unittest.IsolatedAsyncioTestCase):
             )]
             self.assertTrue(events[-1]["ok"])
 
+    async def test_malformed_model_ids_setting_disables_allowlist_safely(self):
+        # Hand-edited/corrupted settings may store model_ids as a string instead
+        # of a list. A string must never degrade into a substring check
+        # ("gpt" in "gpt-4o" would be fail-open); the allowlist is disabled.
+        config = {
+            "model_api_key": "test-secret",
+            "model_api_base_url": "https://provider.test/v1",
+            "model_api_wire_api": "responses",
+            "model_ids": "exact.model-id",
+        }
+        client = httpx.AsyncClient(transport=httpx.MockTransport(
+            lambda request: self.sse({"type": "response.completed"}),
+        ))
+        with patch("app.services.provider_service.storage_service.get_settings", return_value=config), \
+             patch("app.services.provider_service.httpx.AsyncClient", return_value=client):
+            service = ModelProviderService()
+            # "unrelated-model" is not a substring of the stored string, so the
+            # old code would have rejected it; the fixed code treats the
+            # malformed setting as "no allowlist configured".
+            events = [event async for event in service.stream_chat_completion(
+                "unrelated-model", [{"role": "user", "content": "Hello"}], "Be helpful",
+            )]
+            self.assertTrue(events[-1]["ok"])
+
     async def test_prediction_protocol_still_works(self):
         events = await self.run_provider(httpx.Response(200, json={"outputs": ["Legacy"]}), wire_api="prediction")
         self.assertEqual(str(self.requests[0].url), "https://provider.test/v1/exact.model-id")

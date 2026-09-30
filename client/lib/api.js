@@ -1,7 +1,10 @@
 function defaultApiBaseUrl() {
   if (typeof window === 'undefined') return 'http://127.0.0.1:8000/api/v1';
   const { hostname, protocol } = window.location;
-  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+  // location.hostname keeps IPv6 brackets ("[::1]"); strip them for comparison
+  // but keep the original (bracketed) form when building the URL.
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
     return `${protocol}//${hostname}:8000/api/v1`;
   }
   // Non-loopback deployments: never send the session cookie over plaintext HTTP.

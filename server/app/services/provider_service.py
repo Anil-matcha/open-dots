@@ -43,6 +43,8 @@ class ModelProviderService:
         # When the operator configured an explicit model list, the requested model
         # must be on it, regardless of wire protocol.
         configured_model_ids = app_settings.get("model_ids") or []
+        if not isinstance(configured_model_ids, list):
+            configured_model_ids = []
         if configured_model_ids and (model or "").strip() not in configured_model_ids:
             yield {
                 "type": "content.delta",

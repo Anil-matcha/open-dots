@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock, patch
 
 from app.services.computer_provider import ComputerProviderError
 from app.services.remote_computer_provider import RemoteComputerProvider
@@ -14,7 +15,7 @@ class StubRemoteComputerProvider(RemoteComputerProvider):
         )
         self.calls = []
 
-    async def _request(self, method, route, payload=None, *, timeout=None):
+    async def _request(self, method, route, payload=None, *, timeout=None, ok_if_not_found=False):
         self.calls.append((method, route, payload))
         if method == "POST" and route == "/computers":
             return {
@@ -52,6 +53,19 @@ class StubRemoteComputerProvider(RemoteComputerProvider):
         if method == "DELETE":
             return {}
         raise AssertionError(f"Unhandled remote call: {method} {route}")
+
+
+async def _awaitable(value):
+    return value
+
+
+class _FakeHttpResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
 
 
 class RemoteComputerProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -122,8 +136,70 @@ class RemoteComputerProviderTests(unittest.IsolatedAsyncioTestCase):
     async def test_remote_provider_requires_an_endpoint_and_key(self):
         provider = RemoteComputerProvider(base_url="", api_key="")
         status = provider.get_or_create("bot-test")
-        with self.assertRaisesRegex(ComputerProviderError, "COMPUTER_REMOTE_API_KEY"):
-            await provider.start(status.computer_id)
+        with self.assertRaisesRegex(ComputerProviderError, "COMPUTER_REMOTE_API_KEY"):            await provider.start(status.computer_id)
+
+    async def test_delete_tolerates_remote_404_but_not_other_errors(self):
+        provider = RemoteComputerProvider(
+            base_url="https://computer.example.test/api",
+            api_key="secret",
+            start_timeout=0.5,
+            timeout=0.5,
+        )
+
+        def client_for(response):
+            client = Mock()
+            client.request = Mock(side_effect=lambda *a, **k: _awaitable(response))
+            context = Mock()
+            context.__aenter__ = Mock(side_effect=lambda *a, **k: _awaitable(client))
+            context.__aexit__ = Mock(side_effect=lambda *a, **k: _awaitable(False))
+            factory = Mock(return_value=context)
+            return factory
+
+        gone = _FakeHttpResponse(404, {"error": "no such computer"})
+        with patch(
+            "app.services.remote_computer_provider.httpx.AsyncClient",
+            client_for(gone),
+        ):
+            # Already deleted remotely: the desired end state, not a failure.
+            self.assertEqual(
+                await provider._request(
+                    "DELETE", "/computers/remote-gone", ok_if_not_found=True
+                ),
+                {},
+            )
+            # Without the flag a 404 is still surfaced.
+            with self.assertRaises(ComputerProviderError):
+                await provider._request("DELETE", "/computers/remote-gone")
+
+        broken = _FakeHttpResponse(500, {"error": "boom"})
+        with patch(
+            "app.services.remote_computer_provider.httpx.AsyncClient",
+            client_for(broken),
+        ):
+            # The flag only forgives 404, never real failures.
+            with self.assertRaises(ComputerProviderError):
+                await provider._request(
+                    "DELETE", "/computers/remote-x", ok_if_not_found=True
+                )
+
+    async def test_cleanup_still_surfaces_non_404_remote_failures(self):
+        class FailingDeleteProvider(StubRemoteComputerProvider):
+            async def _request(
+                self, method, route, payload=None, *, timeout=None,
+                ok_if_not_found=False,
+            ):
+                if method == "DELETE":
+                    raise ComputerProviderError("remote exploded")
+                return await super()._request(
+                    method, route, payload, timeout=timeout,
+                    ok_if_not_found=ok_if_not_found,
+                )
+
+        provider = FailingDeleteProvider()
+        created = provider.get_or_create("bot-test")
+        await provider.start(created.computer_id)
+        with self.assertRaisesRegex(ComputerProviderError, "remote exploded"):
+            await provider.cleanup(created.computer_id)
 
 
 if __name__ == "__main__":
