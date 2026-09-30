@@ -129,4 +129,5 @@ async def inject_credential_into_box(
         return
 
     plaintext, file_path = decrypted
+    
     await run_in_threadpool(ascii_box_service.write_file, box_id, file_path, plaintext)

@@ -8,6 +8,7 @@ from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.db.models.task import Tasks
 from app.db.session import AsyncSessionLocal
@@ -35,8 +36,10 @@ STUCK_STARTING_SECONDS = 600
 QUEUED_RECOVERY_SECONDS = 60
 
 PROVIDER_COMMANDS = {
-    "claude": "claude -p {prompt} --dangerously-skip-permissions --output-format json",
+    "claude": "claude -p {prompt} --output-format json",
 }
+
+PERMISSION_HOOK_SETTINGS_PATH = ".claude/settings.json"
 
 
 class TaskNotFoundError(Exception):
@@ -73,6 +76,37 @@ async def _ensure_box_running(box_id: str) -> None:
             raise BoxCommandError(
                 f"Could not resume box {box_id}: {exc.status} {exc.reason}"
             ) from exc
+
+
+async def _write_permission_hook_config(box_id: str, user_id: str) -> None:
+    """Tell Claude Code to send every permission decision to our backend
+    instead of skipping permissions or asking a human at a terminal."""
+    hook_url = f"{settings.PERMISSION_HOOK_BASE_URL}/api/v1/permissions/check/{user_id}"
+    config = {
+        "hooks": {
+            "PermissionRequest": [
+                {
+                    "matcher": "*",
+                    "hooks": [
+                        {
+                            "type": "http",
+                            "url": hook_url,
+                            "timeout": 120,
+                            "headers": {
+                                "Authorization": f"Bearer {settings.HOOK_TOKEN}"
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    await run_in_threadpool(
+        ascii_box_service.write_file,
+        box_id,
+        PERMISSION_HOOK_SETTINGS_PATH,
+        json.dumps(config),
+    )
 
 
 def _build_command(
@@ -197,6 +231,7 @@ async def start_task(db: AsyncSession, task_id: int) -> Tasks:
             )
         except CredentialNotFoundError:
             pass
+        await _write_permission_hook_config(task.box_id, task.user_id)
     except START_ERRORS as exc:
         task.status = "failed"
         task.error = str(exc)

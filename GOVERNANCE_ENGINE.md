@@ -234,3 +234,64 @@ work rather than folding into the base governance engine build.
    cookie-based auth to replace the web UI's localStorage-trusted identity
    before this ships publicly. Telegram's side of identification doesn't
    need to change.
+
+## 10. How the engine actually hooks into task execution
+
+Today a task runs as one opaque `claude -p ... --dangerously-skip-permissions`
+command inside the sandbox ([task_execution_service.py](../backend/app/services/task_execution_service.py))
+— the backend only sees the final JSON result, with no visibility into
+individual actions as they happen. Making §2 real (judging actions, not
+tasks) requires a way to intercept each tool call before it executes.
+
+**Ruled out**: calling the Claude API directly with our own tool-use loop.
+Would require either our own API key (real per-token billing) or the user's
+API key (most Pro/Max subscriptions don't grant API access separately) —
+either way it defeats the BYO-subscription model this whole project depends
+on ([PLAN.md](PLAN.md) §5.1).
+
+**Chosen approach**: Claude Code CLI's `PermissionRequest` hook, type
+`"http"`. Before a task runs, the backend writes a `.claude/settings.json`
+into the sandbox (using the sandbox API's existing `write_file`, already
+used for credential injection — [box_operations.py](../backend/app/services/box_operations.py))
+configuring that hook to POST to a backend endpoint whenever a tool call
+needs a decision. The command template drops `--dangerously-skip-permissions`
+so the hook actually fires. No MCP server needed — just a plain HTTP
+endpoint that maps `tool_name`/`tool_input` to `(bucket, connector, tool)`,
+calls `check_permission`, and returns an allow/deny decision in the shape
+Claude Code expects.
+
+Two real constraints this surfaces: (1) the sandbox is a remote box and
+can't reach `localhost` — dev needs a tunnel (ngrok or similar), production
+needs the backend's real public URL; (2) the hook payload carries no
+`user_id`, so it has to be baked into the per-task `settings.json` at
+write-time (e.g. in the hook URL or a header), not assumed from context.
+
+**Rejected alternative**: `--permission-prompt-tool` (registering as an MCP
+server the CLI calls back into). Works, and is confirmed as a real pattern
+in the wild (OpenMausBot does exactly this — see below), but is strictly
+more infrastructure than the HTTP hook for the same outcome.
+
+## 11. Notes from competitor source code worth revisiting later
+
+From the source-code audit in [PLAN.md](PLAN.md) §3 — flagging the specific
+pieces relevant to this doc rather than re-reading the full audit each time:
+
+- **OpenMausBot** (`milind-soni/OpenMausBot`) confirms CLI-level tool
+  interception is a proven pattern: it `spawn()`s the real `claude`/`codex`
+  binary and wires permission through `--permission-prompt-tool`, registering
+  itself as an MCP server. Validates the general approach in §10 above, but
+  we're using the simpler HTTP-hook route instead of replicating their MCP
+  plumbing.
+- **Rakazo** (`elie222/rakazo`)'s approval engine
+  (`packages/core/src/action-approval.ts`) uses the same specificity
+  ordering (tool > connector > category) as `check_permission`, plus
+  something we haven't built: a **regex-based verb classifier**
+  (`send/pay/delete/charge` vs `get/list/search`) that auto-assigns a risk
+  bucket from a tool's name/shape. Worth reading when building real
+  connectors (§7) — it's a shortcut for bucket-assignment on tools nobody's
+  hand-tagged yet, rather than requiring every connector action to be
+  manually classified at build time as §3 currently assumes.
+- **OpenBot** (`CopilotKit/OpenBot`)'s audit-trail ordering: write the audit
+  row *before* honoring any policy decision, so refused actions are logged
+  too, not just approved ones. Apply this when building the audit trail
+  (§6/§9).

@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     # Origin(s) allowed to call this API from a browser (the frontend's dev
     # server / deployed URL). Comma-separated.
     FRONTEND_ORIGINS: str = "http://localhost:3000"
+    
+    # A secret token that the webhook will require to be present in the request header. This is to prevent unauthorized requests from the public internet.
+    HOOK_TOKEN: str
+
+    # Public URL the sandbox can reach to call back into this backend for
+    # permission checks (an ngrok tunnel in dev, the real deployed URL in
+    # production). No trailing slash.
+    PERMISSION_HOOK_BASE_URL: str
 
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
 
