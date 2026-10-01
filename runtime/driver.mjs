@@ -38,12 +38,43 @@ function authorized(request) {
   return Boolean(token) && request.headers['x-computer-token'] === token;
 }
 
+// Defense in depth: the provider publishes this server on loopback only, but the
+// driver itself binds 0.0.0.0. Reject requests whose Host header is not a local
+// address so a manual `docker run -p 3000:3000` cannot silently expose the
+// token-guarded routes to the LAN.
+function normalizeHost(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw.startsWith('[')) return raw.slice(1, raw.indexOf(']')); // [::1]:port
+  const parts = raw.split(':');
+  return parts.length === 2 ? parts[0] : raw;
+}
+
+const allowedHosts = new Set(
+  (process.env.COMPUTER_ALLOWED_HOSTS || '127.0.0.1,localhost,::1')
+    .split(',')
+    .map(normalizeHost)
+    .filter(Boolean)
+);
+
+function requestHost(request) {
+  return normalizeHost(request.headers['host']);
+}
+
 async function readBody(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  let total = 0;
+  for await (const chunk of request) {
+    total += chunk.length;
+    if (total > 1024 * 1024) {
+      // Enforce the limit while streaming: a huge body must not be buffered
+      // into memory first.
+      request.destroy();
+      throw new Error('Request body is too large.');
+    }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return {};
   const raw = Buffer.concat(chunks).toString('utf8');
-  if (raw.length > 1024 * 1024) throw new Error('Request body is too large.');
   try {
     return JSON.parse(raw);
   } catch {
@@ -115,6 +146,10 @@ async function executeCommand(command) {
 }
 
 async function handle(request, response) {
+  if (!allowedHosts.has(requestHost(request))) {
+    json(response, 403, { error: 'Host not allowed. Publish the runtime on loopback only.' });
+    return;
+  }
   if (!authorized(request)) {
     json(response, 401, { error: 'Computer runtime authentication failed.' });
     return;

@@ -1,8 +1,17 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || (
-  typeof window !== 'undefined' && window.location.hostname === 'localhost'
-    ? 'http://localhost:8000/api/v1'
-    : 'http://127.0.0.1:8000/api/v1'
-);
+function defaultApiBaseUrl() {
+  if (typeof window === 'undefined') return 'http://127.0.0.1:8000/api/v1';
+  const { hostname, protocol } = window.location;
+  // location.hostname keeps IPv6 brackets ("[::1]"); strip them for comparison
+  // but keep the original (bracketed) form when building the URL.
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+    return `${protocol}//${hostname}:8000/api/v1`;
+  }
+  // Non-loopback deployments: never send the session cookie over plaintext HTTP.
+  return `https://${hostname}:8000/api/v1`;
+}
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || defaultApiBaseUrl();
 
 let sessionPromise = null;
 
@@ -92,7 +101,7 @@ export async function createBot(botData) {
 }
 
 export async function updateBot(botId, updates) {
-  const res = await apiFetch(`${API_BASE_URL}/bots/${botId}`, {
+  const res = await apiFetch(`${API_BASE_URL}/bots/${encodeURIComponent(botId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(updates),
@@ -102,7 +111,7 @@ export async function updateBot(botId, updates) {
 }
 
 export async function deleteBot(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/bots/${botId}`, { method: 'DELETE' });
+  const res = await apiFetch(`${API_BASE_URL}/bots/${encodeURIComponent(botId)}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete bot');
   return res.json();
 }
@@ -211,7 +220,7 @@ export async function fetchAuditEvents(limit = 100) {
 }
 
 export function subscribeToChatStream(threadId, model, onEvent, onError) {
-  const url = `${API_BASE_URL}/chat/stream/${threadId}?model=${encodeURIComponent(model)}`;
+  const url = `${API_BASE_URL}/chat/stream/${encodeURIComponent(threadId)}?model=${encodeURIComponent(model)}`;
   let eventSource = null;
   let cancelled = false;
 
@@ -302,13 +311,17 @@ export async function fetchComputerStatus(botId) {
 }
 
 export async function fetchComputerHealth(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/health`);
+  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/health`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error('Failed to load computer health');
   return res.json();
 }
 
 export async function fetchComputerScreenshot(botId) {
-  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/screenshot`);
+  const res = await apiFetch(`${API_BASE_URL}/computers/${encodeURIComponent(botId)}/screenshot`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error('Failed to load computer screen state');
   return res.json();
 }

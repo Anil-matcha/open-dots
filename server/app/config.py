@@ -65,6 +65,12 @@ class Settings:
     ]
     HOST: str = os.getenv("HOST", "127.0.0.1")
     PORT: int = int(os.getenv("PORT", "8000"))
+    # Largest accepted HTTP request body for /api/v1. Starlette buffers JSON
+    # bodies fully in memory before validation, so an unbounded body is a
+    # remotely-triggerable memory-exhaustion vector even on public endpoints
+    # such as /api/v1/auth/login. 64 MiB is far above any legitimate payload
+    # here (chat messages, settings, image uploads).
+    MAX_REQUEST_BYTES: int = int(os.getenv("MAX_REQUEST_BYTES", str(64 * 1024 * 1024)))
 
     def __init__(self):
         self.DATA_DIR.mkdir(parents=True, exist_ok=True)

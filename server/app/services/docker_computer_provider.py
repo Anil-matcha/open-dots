@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
@@ -189,6 +191,13 @@ class DockerComputerProvider:
             bot_id = labels.get("open-dots.bot-id")
             if not token or not bot_id:
                 return record
+            if labels.get("open-dots.computer-id") != computer_id:
+                # Container names are truncated to 70 characters, so two long
+                # computer ids can theoretically share a name. Never adopt a
+                # container whose label does not match this computer id:
+                # adopting it would steer this bot's actions into another
+                # bot's runtime.
+                return record
             state_info = info.get("State", {}) or {}
             paused = bool(state_info.get("Paused"))
             running = bool(state_info.get("Running"))
@@ -209,26 +218,40 @@ class DockerComputerProvider:
 
     async def _launch(self, record: _RuntimeRecord) -> None:
         record.workspace.mkdir(parents=True, exist_ok=True)
-        args = [
-            "run",
-            "-d",
-            "--rm",
-            "--init",
-            "--name",
-            self._container_name(record),
-            "--label",
-            "open-dots.runtime=computer",
-            "--label",
-            f"open-dots.computer-id={record.status.computer_id}",
-            "--label",
-            f"open-dots.bot-id={record.status.bot_id}",
-            "--publish",
-            f"127.0.0.1::{self.runtime_port}",
-            "--read-only",
-            "--tmpfs",
-            "/tmp:rw,nosuid,size=512m",
-            "--tmpfs",
-            "/home/pwuser:rw,nosuid,size=1g",
+        # The runtime token is the key to arbitrary in-container shell. Docker CLI
+        # arguments are visible to any local user via `ps`, so pass the secret
+        # through a 0600 env file instead of `--env` on the command line.
+        env_fd, env_path = tempfile.mkstemp(prefix="open-dots-computer-", suffix=".env")
+        try:
+            try:
+                with os.fdopen(env_fd, "w") as env_file:
+                    env_file.write(f"COMPUTER_TOKEN={record.token}\n")
+            except Exception:
+                # fdopen takes ownership of the fd only on success; close it here
+                # so a failure cannot leak the descriptor.
+                os.close(env_fd)
+                raise
+            os.chmod(env_path, 0o600)
+            args = [
+                "run",
+                "-d",
+                "--rm",
+                "--init",
+                "--name",
+                self._container_name(record),
+                "--label",
+                "open-dots.runtime=computer",
+                "--label",
+                f"open-dots.computer-id={record.status.computer_id}",
+                "--label",
+                f"open-dots.bot-id={record.status.bot_id}",
+                "--publish",
+                f"127.0.0.1::{self.runtime_port}",
+                "--read-only",
+                "--tmpfs",
+                "/tmp:rw,nosuid,size=512m",
+                "--tmpfs",
+                "/home/pwuser:rw,nosuid,size=1g",
             "--mount",
             f"type=bind,src={record.workspace},dst=/workspace",
             "--cpus",
@@ -245,8 +268,8 @@ class DockerComputerProvider:
             "2g",
             "--user",
             "pwuser",
-            "--env",
-            f"COMPUTER_TOKEN={record.token}",
+            "--env-file",
+            env_path,
             "--env",
             f"COMPUTER_ID={record.status.computer_id}",
             "--env",
@@ -257,20 +280,27 @@ class DockerComputerProvider:
             f"COMPUTER_COMMAND_TIMEOUT={int(self.command_timeout * 1000)}",
             self.image,
         ]
-        if self.seccomp_profile.is_file():
-            args[-1:-1] = ["--security-opt", f"seccomp={self.seccomp_profile}"]
+            if self.seccomp_profile.is_file():
+                args[-1:-1] = ["--security-opt", f"seccomp={self.seccomp_profile}"]
 
-        output = await self._docker(args, timeout=self.start_timeout)
-        container_id = output.splitlines()[-1].strip() if output else ""
-        if not container_id:
-            raise ComputerProviderError("Docker did not return a computer container id.")
-        record.container_id = container_id
+            output = await self._docker(args, timeout=self.start_timeout)
+            container_id = output.splitlines()[-1].strip() if output else ""
+            if not container_id:
+                raise ComputerProviderError("Docker did not return a computer container id.")
+            record.container_id = container_id
 
-        ports = await self._docker(["port", container_id, f"{self.runtime_port}/tcp"])
-        matches = re.findall(r":(\d+)", ports)
-        if not matches:
-            raise ComputerProviderError("Docker did not publish a computer runtime port.")
-        record.port = int(matches[-1])
+            ports = await self._docker(["port", container_id, f"{self.runtime_port}/tcp"])
+            matches = re.findall(r":(\d+)", ports)
+            if not matches:
+                raise ComputerProviderError("Docker did not publish a computer runtime port.")
+            record.port = int(matches[-1])
+        finally:
+            # Docker reads the env file at container creation time, so it is safe
+            # to remove immediately after `docker run` returns.
+            try:
+                os.unlink(env_path)
+            except OSError:
+                pass
 
     async def _remove_container(self, record: _RuntimeRecord, suppress_errors: bool = True) -> None:
         if not record.container_id:

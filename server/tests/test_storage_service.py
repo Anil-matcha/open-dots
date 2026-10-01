@@ -20,6 +20,21 @@ class StorageServiceTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_database_files_are_owner_only(self):
+        # The main database plus any WAL sidecars must never be readable by
+        # other local users: the -wal file can hold recent page copies.
+        paths = [
+            self.root / "open-dots.sqlite3",
+            self.root / "open-dots.sqlite3-wal",
+            self.root / "open-dots.sqlite3-shm",
+        ]
+        existing = [path for path in paths if path.exists()]
+        self.assertTrue(existing, "expected at least the main database file to exist")
+        for path in existing:
+            self.assertEqual(
+                path.stat().st_mode & 0o777, 0o600, f"{path.name} is not 0600"
+            )
+
     def test_state_and_encrypted_settings_survive_reopen(self):
         self.service.save_bots([{"id": "bot-test", "name": "Persistent bot"}])
         self.service.add_message(

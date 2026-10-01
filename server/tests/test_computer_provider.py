@@ -236,7 +236,7 @@ class ComputerRouterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(started.status_code, 200)
             self.assertEqual(started.json()["result"]["state"], "running")
 
-            screen = await client.get(f"/api/v1/computers/{bot_id}/screenshot")
+            screen = await client.post(f"/api/v1/computers/{bot_id}/screenshot")
             self.assertEqual(screen.status_code, 200)
             self.assertTrue(screen.json()["result"]["available"])
 

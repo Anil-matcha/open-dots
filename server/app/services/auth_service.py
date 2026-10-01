@@ -45,8 +45,15 @@ class AuthService:
                 return existing
 
         token = secrets.token_urlsafe(32)
-        self.token_path.write_text(token + "\n", encoding="utf-8")
-        os.chmod(self.token_path, 0o600)
+        # Create the file with 0600 from the start: write_text() would leave a
+        # brief world-readable window before chmod().
+        fd = os.open(self.token_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as token_file:
+                token_file.write(token + "\n")
+        except Exception:
+            os.close(fd)
+            raise
         return token
 
     def authenticate_token(self, token: Optional[str]) -> bool:

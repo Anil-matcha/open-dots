@@ -145,18 +145,35 @@ class RemoteComputerProvider:
         nested = response.get("data")
         return nested if isinstance(nested, dict) else response
 
+    @staticmethod
+    def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+        """Best-effort int() over third-party JSON: a hostile or buggy remote
+        must not turn into an unhandled ValueError (and a 500) here."""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
     def _apply_status(self, status: ComputerStatus, payload: Dict[str, Any]) -> ComputerStatus:
         data = self._payload(payload)
         status.state = self._state(data.get("state") or data.get("status"), status.state)
         status.health = self._health(data.get("health") or data.get("health_status"), status.health)
         if data.get("width") is not None:
-            status.width = int(data["width"])
+            width = self._coerce_int(data["width"])
+            if width is not None:
+                status.width = width
         if data.get("height") is not None:
-            status.height = int(data["height"])
+            height = self._coerce_int(data["height"])
+            if height is not None:
+                status.height = height
         if data.get("fps") is not None:
-            status.fps = int(data["fps"])
+            fps = self._coerce_int(data["fps"])
+            if fps is not None:
+                status.fps = fps
         if data.get("generation") is not None:
-            status.generation = max(status.generation, int(data["generation"]))
+            generation = self._coerce_int(data["generation"])
+            if generation is not None:
+                status.generation = max(status.generation, generation)
         if data.get("frame_id") is not None:
             status.frame_id = str(data["frame_id"])
         if data.get("url") is not None:
@@ -235,6 +252,7 @@ class RemoteComputerProvider:
         payload: Optional[Dict[str, Any]] = None,
         *,
         timeout: Optional[float] = None,
+        ok_if_not_found: bool = False,
     ) -> Dict[str, Any]:
         try:
             async with httpx.AsyncClient(
@@ -246,6 +264,10 @@ class RemoteComputerProvider:
             raise ComputerProviderError("Remote computer API did not respond.") from exc
 
         if response.status_code == 204:
+            return {}
+        if response.status_code == 404 and ok_if_not_found:
+            # Idempotent delete: already gone on the remote side is the
+            # desired end state.
             return {}
         try:
             body = response.json()
@@ -462,9 +484,21 @@ class RemoteComputerProvider:
 
     async def cleanup(self, computer_id: str) -> Dict[str, Any]:
         async with self._lock:
-            record = self._record_for(computer_id)
+            record = self._computers.get(computer_id)
+            if record is None:
+                # Already cleaned (or never created): treat as a successful no-op so
+                # delete flows stay idempotent instead of failing with 409.
+                return {
+                    "computer_id": computer_id,
+                    "bot_id": computer_id.removeprefix("computer-"),
+                    "provider": self.provider_name,
+                    "state": "cleaned",
+                    "generation": 0,
+                }
             if record.remote_id:
-                await self._request("DELETE", self._remote_path(record.remote_id))
+                await self._request(
+                    "DELETE", self._remote_path(record.remote_id), ok_if_not_found=True
+                )
             self._computers.pop(computer_id, None)
             return {
                 "computer_id": computer_id,

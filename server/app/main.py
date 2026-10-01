@@ -26,6 +26,16 @@ PUBLIC_API_PATHS = {
 @app.middleware("http")
 async def require_authentication(request: Request, call_next):
     path = request.url.path
+    if path.startswith("/api/v1"):
+        # Reject absurd bodies before any parsing or buffering happens. This
+        # runs before authentication so even public endpoints (notably
+        # /api/v1/auth/login) cannot be used for memory exhaustion.
+        try:
+            content_length = int(request.headers.get("content-length") or 0)
+        except ValueError:
+            content_length = 0
+        if content_length > settings.MAX_REQUEST_BYTES:
+            return JSONResponse({"detail": "Request body is too large."}, status_code=413)
     if path.startswith("/api/v1") and request.method != "OPTIONS":
         origin = request.headers.get("origin")
         allowed_origins = {*settings.CORS_ORIGINS, str(request.base_url).rstrip("/")}
