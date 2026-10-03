@@ -83,6 +83,8 @@ Set `model_ids` to the service's supported chat model IDs and `default_model` to
 | `DEFAULT_MODEL` | `gpt-5-mini` | Initial model for new assistants |
 | `COMPOSIO_API_KEY` | empty | Optional connector credential |
 | `YDC_API_KEY` | empty | Optional You.com API key for `/search`; the keyless free profile is used when unset |
+| `COHESIVITY_MANAGEMENT_KEY` | empty | Optional Cohesivity management credential |
+| `COHESIVITY_TENANT_ID` | empty | Optional Cohesivity tenant identifier |
 | `DATA_DIR` | `~/.open-dots` | SQLite state and local keys |
 | `APP_ENCRYPTION_KEY` | generated in `DATA_DIR` | Optional Fernet key for encrypted credentials |
 | `APP_AUTH_TOKEN` | generated in `DATA_DIR` | Server-side owner credential for sign-in and direct API access |
@@ -101,6 +103,16 @@ If you previously built with `NEXT_PUBLIC_API_TOKEN`, rotate the owner credentia
 - No key is required: without `YDC_API_KEY` the keyless free profile is used, which serves a reduced read-only tool set.
 - Set `YDC_API_KEY` to use the authenticated endpoint with higher limits.
 - The lookup registers as `search.web` (risk `external`). Like `connector.github_list_issues`, it is an explicit, read-only command typed by the user, so it does not pause for approval; every run still produces the standard gateway audit events.
+
+## Backend services
+
+`/backend <command>` in chat provisions and manages backend infrastructure through [Cohesivity](https://cohesivity.ai?ref=gh-open-dots), so the assistant can deploy apps, query databases, store files, and use 15+ services without separate provider accounts.
+
+* `/backend setup` creates an ephemeral 72-hour tenant. No key is required.
+* `/backend status` checks provisioned resources and tenant health.
+* `/backend provision <resource>` adds a service: `postgres`, `railway-hosting`, `object-storage`, `redis`, `realtime`, `inbox`, and [others](https://cohesivity.ai/offerings?ref=gh-open-dots).
+* Set `COHESIVITY_MANAGEMENT_KEY` and `COHESIVITY_TENANT_ID` to reuse an existing tenant across sessions.
+* Setup and provision pause for approval. Status is read-only.
 
 ## Optional computer runtime
 
