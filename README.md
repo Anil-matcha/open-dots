@@ -83,6 +83,7 @@ Set `model_ids` to the service's supported chat model IDs and `default_model` to
 | `DEFAULT_MODEL` | `gpt-5-mini` | Initial model for new assistants |
 | `COMPOSIO_API_KEY` | empty | Optional connector credential |
 | `YDC_API_KEY` | empty | Optional You.com API key for `/search`; the keyless free profile is used when unset |
+| `SERPLY_API_KEY` | empty | Optional [Serply](https://serply.io) API key; when set, `/search` returns Google results through Serply instead of You.com |
 | `DATA_DIR` | `~/.open-dots` | SQLite state and local keys |
 | `APP_ENCRYPTION_KEY` | generated in `DATA_DIR` | Optional Fernet key for encrypted credentials |
 | `APP_AUTH_TOKEN` | generated in `DATA_DIR` | Server-side owner credential for sign-in and direct API access |
@@ -100,6 +101,7 @@ If you previously built with `NEXT_PUBLIC_API_TOKEN`, rotate the owner credentia
 
 - No key is required: without `YDC_API_KEY` the keyless free profile is used, which serves a reduced read-only tool set.
 - Set `YDC_API_KEY` to use the authenticated endpoint with higher limits.
+- Set `SERPLY_API_KEY` to send `/search` to [Serply](https://serply.io) (Google results, [API docs](https://serply.io/docs)) instead. You.com stays the default when it is unset.
 - The lookup registers as `search.web` (risk `external`). Like `connector.github_list_issues`, it is an explicit, read-only command typed by the user, so it does not pause for approval; every run still produces the standard gateway audit events.
 
 ## Optional computer runtime
