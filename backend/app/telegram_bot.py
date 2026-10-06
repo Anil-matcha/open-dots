@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -18,6 +19,7 @@ from app.db.session import AsyncSessionLocal
 from app.services import (
     auth_flow_service,
     link_service,
+    permission_ask_service,
     schedule_service,
     task_execution_service,
     user_credential_service,
@@ -219,6 +221,37 @@ async def _poll_task(bot, chat_id: int, task_id: int) -> None:
         await bot.send_message(chat_id=chat_id, text=task.result or "Task completed.")
     else:
         await bot.send_message(chat_id=chat_id, text=f"Task failed: {task.error}")
+
+
+async def permission_ask_callback_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        _, ask_id_str, decision, always_str = query.data.split(":")
+        ask_id = int(ask_id_str)
+    except (ValueError, AttributeError):
+        await query.edit_message_text("Couldn't read that button's data.")
+        return
+    if decision not in ("allow", "deny"):
+        await query.edit_message_text("Couldn't read that button's data.")
+        return
+
+    async with AsyncSessionLocal() as db:
+        try:
+            ask = await permission_ask_service.answer_ask(
+                db, ask_id, decision=decision, always=always_str == "1"
+            )
+        except ValueError:
+            await query.edit_message_text("This request no longer exists.")
+            return
+
+    outcome = "Allowed" if ask.decision == "allow" else "Denied"
+    if ask.always:
+        outcome += " (always — won't ask again for this)"
+    await query.edit_message_text(f"{outcome}.")
 
 
 TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -430,6 +463,9 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("pause", pause_handler))
     application.add_handler(CommandHandler("resume", resume_handler))
     application.add_handler(CommandHandler("unschedule", unschedule_handler))
+    application.add_handler(
+        CallbackQueryHandler(permission_ask_callback_handler, pattern=r"^ask:")
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     return application
 

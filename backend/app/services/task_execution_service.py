@@ -22,7 +22,9 @@ RUNNABLE_BOX_STATES = {"ready", "running", "idle"}
 
 # queued: persisted, not yet launched. starting: claimed by one caller and
 # being launched. pending: legacy pre-launch status from before the split.
-ACTIVE_STATUSES = {"queued", "starting", "pending", "running"}
+# waiting_approval: launched, but blocked inside a PermissionRequest hook
+# call until a human answers it (see permission_ask_service).
+ACTIVE_STATUSES = {"queued", "starting", "pending", "running", "waiting_approval"}
 LAUNCHED_STATUSES = {"pending", "running"}
 FINISHED_STATUSES = {"succeeded", "failed"}
 
@@ -78,10 +80,12 @@ async def _ensure_box_running(box_id: str) -> None:
             ) from exc
 
 
-async def _write_permission_hook_config(box_id: str, user_id: str) -> None:
+async def _write_permission_hook_config(box_id: str, user_id: str, task_id: int) -> None:
     """Tell Claude Code to send every permission decision to our backend
     instead of skipping permissions or asking a human at a terminal."""
-    hook_url = f"{settings.PERMISSION_HOOK_BASE_URL}/api/v1/permissions/check/{user_id}"
+    hook_url = (
+        f"{settings.PERMISSION_HOOK_BASE_URL}/api/v1/permissions/check/{user_id}/{task_id}"
+    )
     config = {
         "hooks": {
             "PermissionRequest": [
@@ -231,7 +235,7 @@ async def start_task(db: AsyncSession, task_id: int) -> Tasks:
             )
         except CredentialNotFoundError:
             pass
-        await _write_permission_hook_config(task.box_id, task.user_id)
+        await _write_permission_hook_config(task.box_id, task.user_id, task.id)
     except START_ERRORS as exc:
         task.status = "failed"
         task.error = str(exc)
@@ -294,6 +298,12 @@ async def list_tasks_for_user(db: AsyncSession, user_id: str) -> list[Tasks]:
 
 
 async def sync_task_status(db: AsyncSession, task: Tasks) -> Tasks:
+    if task.status == "waiting_approval":
+        # Blocked inside a permission hook call, answered by a different
+        # request (web or Telegram) — nothing to ask the sandbox here, just
+        # re-read in case it was just answered.
+        return await _reload(db, task.id)
+
     if task.status not in LAUNCHED_STATUSES or not task.prompt_id:
         return task
 

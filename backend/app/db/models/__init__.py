@@ -4,5 +4,6 @@ from app.db.models.task import Tasks
 from app.db.models.link_code import LinkCode
 from app.db.models.schedule import Schedule
 from app.db.models.permission_rule import PermissionRule
+from app.db.models.permission_ask import PermissionAsk
 
-__all__ = ["UserSandbox", "UserCredential", "Tasks", "LinkCode", "Schedule","PermissionRule"]
+__all__ = ["UserSandbox", "UserCredential", "Tasks", "LinkCode", "Schedule","PermissionRule","PermissionAsk"]
