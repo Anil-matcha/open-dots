@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.schemas.permission import AnswerAskRequest, PermissionAskResponse
 from app.services import notification_service, permission_ask_service
+from app.services.github_classifier import classify_bash_command
 from app.services.permission_service import check_permission as check_permission_rule
 
 router = APIRouter(
@@ -12,10 +13,9 @@ router = APIRouter(
     tags=["Permissions"],
 )
 
-# Coarse first pass: no real connectors exist yet, so every tool maps to a
-# bucket only (no connector/tool-level granularity). Anything not listed
-# here defaults to "system" — the most cautious bucket — rather than being
-# assumed safe.
+# Coarse default: no connector/tool-level granularity for these yet.
+# Anything not listed here defaults to "system" — the most cautious bucket
+# — rather than being assumed safe.
 TOOL_BUCKETS = {
     "Read": "read",
     "Grep": "read",
@@ -26,6 +26,20 @@ TOOL_BUCKETS = {
     "Edit": "create",
     "Bash": "system",
 }
+
+
+def _classify(tool_name: str, body: dict) -> tuple[str, str | None, str | None]:
+    """(bucket, connector, tool) for a hook call. Bash commands are run
+    through per-connector classifiers first (currently just github_classifier
+    for git) — this is the one place that knowledge plugs in, so adding a
+    new connector's classifier here is the only change it needs."""
+    if tool_name == "Bash":
+        command = body.get("tool_input", {}).get("command", "")
+        classified = classify_bash_command(command)
+        if classified is not None:
+            return classified
+
+    return TOOL_BUCKETS.get(tool_name, "system"), None, None
 
 # Kept under the hook's own 120s timeout (settings.json's PermissionRequest
 # config) so we always get a chance to return "deny" ourselves on expiry,
@@ -60,12 +74,12 @@ async def check_permission(
 
     body = await request.json()
     tool_name = body.get("tool_name", "")
-    bucket = TOOL_BUCKETS.get(tool_name, "system")
+    bucket, connector, tool = _classify(tool_name, body)
 
-    decision = await check_permission_rule(db, user_id, bucket)
+    decision = await check_permission_rule(db, user_id, bucket, connector=connector, tool=tool)
     if decision == "ask":
         ask = await permission_ask_service.create_ask(
-            db, user_id, bucket=bucket, task_id=task_id, tool=tool_name or None
+            db, user_id, bucket=bucket, task_id=task_id, connector=connector, tool=tool
         )
         chat_id = notification_service.telegram_chat_id(user_id)
         if chat_id is not None:

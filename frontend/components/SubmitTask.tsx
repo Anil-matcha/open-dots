@@ -1,11 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { api, ApiError, Schedule, Task } from "@/lib/api";
+import { api, ApiError, PermissionAsk, Schedule, Task } from "@/lib/api";
 import { Button, Card, ErrorText } from "./Card";
 
 const POLL_INTERVAL_MS = 3000;
-const ACTIVE_STATUSES: Task["status"][] = ["queued", "starting", "pending", "running"];
+const ACTIVE_STATUSES: Task["status"][] = [
+  "queued",
+  "starting",
+  "pending",
+  "running",
+  "waiting_approval",
+];
 
 const FREQUENCIES = ["hourly", "daily", "weekdays", "weekly"] as const;
 type Frequency = (typeof FREQUENCIES)[number];
@@ -88,6 +94,9 @@ export function SubmitTask({
   const [replyErrors, setReplyErrors] = useState<Record<number, string | null>>({});
   const pollers = useRef<Map<number, ReturnType<typeof setInterval>>>(new Map());
 
+  const [pendingAsks, setPendingAsks] = useState<Record<number, PermissionAsk>>({});
+  const [askBusy, setAskBusy] = useState<Record<number, boolean>>({});
+
   const upsertTask = (task: Task) => {
     setTasks((prev) => {
       const next = prev.filter((t) => t.id !== task.id);
@@ -106,12 +115,35 @@ export function SubmitTask({
     }
   };
 
+  const clearPendingAsk = (taskId: number) => {
+    setPendingAsks((prev) => {
+      if (!(taskId in prev)) return prev;
+      const next = { ...prev };
+      delete next[taskId];
+      return next;
+    });
+  };
+
+  const fetchPendingAsk = async (taskId: number) => {
+    try {
+      const ask = await api.getPendingAsk(taskId);
+      if (ask) setPendingAsks((prev) => ({ ...prev, [taskId]: ask }));
+    } catch {
+      // transient — the next poll tick will retry
+    }
+  };
+
   const startPolling = (taskId: number) => {
     if (pollers.current.has(taskId)) return;
     const handle = setInterval(async () => {
       try {
         const updated = await api.getTask(taskId);
         upsertTask(updated);
+        if (updated.status === "waiting_approval") {
+          fetchPendingAsk(taskId);
+        } else {
+          clearPendingAsk(taskId);
+        }
         if (!ACTIVE_STATUSES.includes(updated.status)) {
           stopPolling(taskId);
         }
@@ -129,7 +161,10 @@ export function SubmitTask({
         setTasks(history);
         history
           .filter((t) => ACTIVE_STATUSES.includes(t.status))
-          .forEach((t) => startPolling(t.id));
+          .forEach((t) => {
+            startPolling(t.id);
+            if (t.status === "waiting_approval") fetchPendingAsk(t.id);
+          });
       } catch {
         // non-fatal — history is a nice-to-have
       }
@@ -224,6 +259,23 @@ export function SubmitTask({
       }));
     } finally {
       setReplyBusy((prev) => ({ ...prev, [parent.id]: false }));
+    }
+  };
+
+  const answerAsk = async (task: Task, decision: "allow" | "deny", always: boolean) => {
+    const ask = pendingAsks[task.id];
+    if (!ask) return;
+    setAskBusy((prev) => ({ ...prev, [ask.id]: true }));
+    try {
+      await api.answerAsk(ask.id, decision, always);
+      clearPendingAsk(task.id);
+      const updated = await api.getTask(task.id);
+      upsertTask(updated);
+      if (ACTIVE_STATUSES.includes(updated.status)) startPolling(task.id);
+    } catch {
+      // transient — leave the ask in place so the user can retry
+    } finally {
+      setAskBusy((prev) => ({ ...prev, [ask.id]: false }));
     }
   };
 
@@ -352,6 +404,8 @@ export function SubmitTask({
             {tasks.map((task) => {
               const expanded = expandedId === task.id;
               const active = ACTIVE_STATUSES.includes(task.status);
+              const ask =
+                task.status === "waiting_approval" ? pendingAsks[task.id] : undefined;
               return (
                 <li
                   key={task.id}
@@ -381,7 +435,40 @@ export function SubmitTask({
                           {task.error}
                         </pre>
                       )}
-                      {active && (
+                      {task.status === "waiting_approval" && (
+                        <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">
+                          <p className="text-xs text-amber-800 dark:text-amber-300">
+                            {ask
+                              ? `Wants to use: ${ask.tool ?? ask.connector ?? ask.bucket} (bucket: ${ask.bucket}). Allow it?`
+                              : "Waiting on a permission decision…"}
+                          </p>
+                          {ask && (
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                onClick={() => answerAsk(task, "allow", false)}
+                                disabled={askBusy[ask.id]}
+                              >
+                                Allow once
+                              </Button>
+                              <Button
+                                onClick={() => answerAsk(task, "allow", true)}
+                                disabled={askBusy[ask.id]}
+                              >
+                                Always allow
+                              </Button>
+                              <button
+                                onClick={() => answerAsk(task, "deny", false)}
+                                disabled={askBusy[ask.id]}
+                                className="rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
+                              >
+                                Deny
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {active && task.status !== "waiting_approval" && (
                         <p className="text-xs text-zinc-500">Working…</p>
                       )}
 

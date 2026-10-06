@@ -117,15 +117,21 @@ async def answer_ask(
     ask.answered_at = datetime.now(UTC)
 
     if always:
-        # Bucket-level only: the hook currently calls check_permission with
-        # just a bucket (no connector/tool), since there are no real
-        # connectors yet. A rule scoped to ask.connector/ask.tool would be
-        # more specific than anything ever looked up, so it would silently
-        # never match — this must stay as coarse as the actual lookup.
+        # Written at the same specificity the ask was captured at. This only
+        # matches future lookups because the hook always derives the same
+        # (bucket, connector, tool) for the same action — e.g. every "git
+        # push" is classified identically, so a rule scoped to
+        # connector="github", tool="git.push" matches every future git push,
+        # without also silently allowing unrelated github actions.
+        # ask.connector/ask.tool are None here when no classifier recognizes
+        # the action, so this still degrades to a bucket-level rule for
+        # anything coarse (plain Bash, Write, Edit, ...).
         db.add(
             PermissionRule(
                 user_id=ask.user_id,
                 bucket=ask.bucket,
+                connector=ask.connector,
+                tool=ask.tool,
                 decision=decision,
             )
         )

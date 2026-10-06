@@ -80,7 +80,14 @@ export type Task = {
   provider: string;
   box_id: string;
   prompt_text: string;
-  status: "queued" | "starting" | "pending" | "running" | "succeeded" | "failed";
+  status:
+    | "queued"
+    | "starting"
+    | "pending"
+    | "running"
+    | "waiting_approval"
+    | "succeeded"
+    | "failed";
   prompt_id: string | null;
   session_id: string | null;
   schedule_id: number | null;
@@ -89,6 +96,19 @@ export type Task = {
   error: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PermissionAsk = {
+  id: number;
+  task_id: number;
+  user_id: string;
+  bucket: string;
+  connector: string | null;
+  tool: string | null;
+  status: "pending" | "answered" | "expired";
+  decision: "allow" | "deny" | null;
+  created_at: string;
+  answered_at: string | null;
 };
 
 export const api = {
@@ -142,6 +162,15 @@ export const api = {
     }),
 
   getTask: (taskId: number) => request<Task>(`/tasks/${taskId}`),
+
+  getPendingAsk: (taskId: number) =>
+    request<PermissionAsk | null>(`/permissions/ask/task/${taskId}`),
+
+  answerAsk: (askId: number, decision: "allow" | "deny", always: boolean) =>
+    request<PermissionAsk>(`/permissions/ask/${askId}/answer`, {
+      method: "POST",
+      body: JSON.stringify({ decision, always }),
+    }),
 
   listTasks: (userId: string) =>
     request<Task[]>(`/tasks?user_id=${encodeURIComponent(userId)}`),

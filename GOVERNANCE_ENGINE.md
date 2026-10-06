@@ -199,12 +199,14 @@ work rather than folding into the base governance engine build.
 | Piece | Status |
 |---|---|
 | Sandbox per user, Claude OAuth login, GitHub device-flow linking, task execution, cron scheduling | **Already built** ([code/](../code)) |
-| Action risk-bucket taxonomy + rule engine (allow/deny/ask) | **Not built** — this doc's core proposal |
-| Inline chat-based approval prompts | **Not built** |
+| Action risk-bucket taxonomy + rule engine (allow/deny/ask), hooked into real task execution via `PermissionRequest` | **Built** — `permission_rule`/`check_permission`, wired through a `.claude/settings.json` hook (§10) |
+| Inline chat-based + web-UI approval prompts, with pause/resume | **Built** — `permission_ask` table, Telegram inline buttons and a web answer endpoint both converge on one `answer_ask` function (§12) |
+| Per-connector action classification beyond a flat tool→bucket map | **Built for GitHub only** (`github_classifier.py`, §12) — a `git status`/`commit`/`push` get independently governed instead of one flat `Bash` bucket. Other connectors still need their own classifier. |
 | Server-side outcome verification (vs. trusting the AI's self-report) | **Not built** |
-| Audit trail of attempted vs. actual actions | **Not built** |
+| Audit trail of attempted vs. actual actions | **Not built** (the `permission_ask`/`permission_rule` tables are a start, but nothing yet records actual post-execution outcomes) |
 | Connector library beyond Claude/GitHub (Medium, YouTube, Discord, etc.) | **Not built**, not yet explicitly scoped in PLAN.md |
 | Multiple named "employees" per user, with per-bot rules | **Not built** — requires schema changes (`bot_id` on tasks/schedules, new permission-rule table) |
+| Real web-UI authentication | **Not built** — see open decision 5 below |
 
 ## Open decisions to resolve before implementation
 
@@ -234,6 +236,23 @@ work rather than folding into the base governance engine build.
    cookie-based auth to replace the web UI's localStorage-trusted identity
    before this ships publicly. Telegram's side of identification doesn't
    need to change.
+6. Git identity inside the sandbox. The `claude` and `github` provider
+   credentials are injected independently per `user_id`
+   (`inject_credential_into_box`), with nothing enforcing they belong to the
+   same real-world person — confirmed in testing, where a sandbox's GitHub
+   CLI was correctly authenticated as the real connected account, while git
+   commit authorship fell back to whatever identity the *Claude* login
+   happened to carry, since no `user.name`/`user.email` was ever configured.
+   Not a security issue (nothing leaked — the Claude account's own harness
+   context is a visible, documented feature, not a secret), but commits made
+   on a real user's behalf could be misattributed unless `start_task`
+   explicitly sets a per-user git identity before running anything.
+7. Classifier coverage. `github_classifier.py` is the only per-connector
+   classifier today — every other `Bash` command, and every tool besides
+   `Bash`, still gets the flat per-tool bucket from §3's original coarse
+   map. Extending real specificity to another connector (or to non-git
+   shell commands generally) means writing another classifier, not
+   touching `check_permission` or the ask/answer mechanism.
 
 ## 10. How the engine actually hooks into task execution
 
@@ -256,15 +275,28 @@ used for credential injection — [box_operations.py](../backend/app/services/bo
 configuring that hook to POST to a backend endpoint whenever a tool call
 needs a decision. The command template drops `--dangerously-skip-permissions`
 so the hook actually fires. No MCP server needed — just a plain HTTP
-endpoint that maps `tool_name`/`tool_input` to `(bucket, connector, tool)`,
-calls `check_permission`, and returns an allow/deny decision in the shape
-Claude Code expects.
+endpoint ([permission.py](../backend/app/routers/permission.py)) that maps
+`tool_name`/`tool_input` to `(bucket, connector, tool)`, calls
+`check_permission`, and returns a decision in the shape Claude Code expects.
+A decision of `"ask"` is no longer collapsed to deny — see §12 for how it's
+actually answered.
 
 Two real constraints this surfaces: (1) the sandbox is a remote box and
 can't reach `localhost` — dev needs a tunnel (ngrok or similar), production
 needs the backend's real public URL; (2) the hook payload carries no
-`user_id`, so it has to be baked into the per-task `settings.json` at
-write-time (e.g. in the hook URL or a header), not assumed from context.
+`user_id`, so it's baked into the hook URL itself at write-time, along with
+the `task_id` (needed so a `permission_ask` row — §12 — can be tied back to
+the right task; a user can have more than one task running at once).
+
+**A built-in gotcha worth remembering**: Claude Code auto-approves a fixed,
+non-configurable set of read-only Bash commands (`ls`, `cat`, `grep`,
+`diff`, and read-only forms of `git` like `status`/`log`/`diff` among
+others) *before* the permission system runs at all — these never reach the
+hook, regardless of what the hook or any rule says. This is why the
+`github_classifier`'s "read" bucket for git verbs is effectively unreachable
+for the verbs on that built-in list; it only actually matters for verbs
+Claude Code doesn't already auto-approve (e.g. `git config`, which looked
+read-only but isn't on the built-in list and correctly still asks).
 
 **Rejected alternative**: `--permission-prompt-tool` (registering as an MCP
 server the CLI calls back into). Works, and is confirmed as a real pattern
@@ -284,14 +316,59 @@ pieces relevant to this doc rather than re-reading the full audit each time:
   plumbing.
 - **Rakazo** (`elie222/rakazo`)'s approval engine
   (`packages/core/src/action-approval.ts`) uses the same specificity
-  ordering (tool > connector > category) as `check_permission`, plus
-  something we haven't built: a **regex-based verb classifier**
-  (`send/pay/delete/charge` vs `get/list/search`) that auto-assigns a risk
-  bucket from a tool's name/shape. Worth reading when building real
-  connectors (§7) — it's a shortcut for bucket-assignment on tools nobody's
-  hand-tagged yet, rather than requiring every connector action to be
-  manually classified at build time as §3 currently assumes.
+  ordering (tool > connector > category) as `check_permission`, plus a
+  **regex-based verb classifier** (`send/pay/delete/charge` vs
+  `get/list/search`) that auto-assigns a risk bucket from a tool's
+  name/shape. **Now built for GitHub**: `github_classifier.py` adapts this
+  idea to git's own verbs (§12) instead of requiring every connector action
+  to be manually classified at build time as §3 originally assumed. Still
+  worth re-reading when building the next connector's classifier.
 - **OpenBot** (`CopilotKit/OpenBot`)'s audit-trail ordering: write the audit
   row *before* honoring any policy decision, so refused actions are logged
   too, not just approved ones. Apply this when building the audit trail
-  (§6/§9).
+  (§6/§9) — `permission_ask` rows are already written before a decision is
+  known (status starts `pending`), so this ordering is already followed for
+  asks; a true audit trail covering allow/deny-without-asking is still open.
+
+## 12. What's actually built: the "ask" flow, end to end
+
+§5 described the inline-approval UX as a goal; this section records how it
+was actually implemented, since the real design differs in one important
+way from the original sketch: the backend and the thing a human answers
+from are **different processes that only share the database** (the
+Telegram bot runs its own long-polling process, entirely separate from the
+FastAPI app) — so "pause and wait for an answer" can't be an in-memory
+`asyncio.Event`, it has to be a database row that gets polled.
+
+- **`permission_ask`** (`app/db/models/permission_ask.py`): one row per
+  pending question — `task_id`, `bucket`/`connector`/`tool`, `status`
+  (`pending` → `answered`/`expired`), `decision`, `always`.
+- **`permission_ask_service.py`**: `create_ask` records the question and
+  flips the task to a new `waiting_approval` status; `answer_ask` resolves
+  it (writing a standing `permission_rule` if `always=True`) and resumes the
+  task; `poll_for_answer` is the sleep-loop the hook endpoint blocks on
+  (bounded under the hook's own timeout, defaulting to **deny** on expiry —
+  consistent with §1, an unanswered question is still "no rule").
+- **Two answering channels, one function**: a Telegram inline keyboard
+  (`notification_service.send_permission_ask`, decoded by a
+  `CallbackQueryHandler` in `telegram_bot.py`) and a web endpoint
+  (`POST /permissions/ask/{id}/answer`, surfaced in the frontend's task
+  card) both call the exact same `answer_ask` — whichever channel a human
+  answers from, the result is identical. This matters because a web-only
+  guest has no Telegram chat to be asked in at all.
+- **A real bug this surfaced and fixed**: the "always allow" rule must be
+  written at the *same specificity the decision was actually checked at*.
+  Writing a rule scoped to a `tool` that the hook never passes into
+  `check_permission` makes that rule permanently invisible — it was
+  committed once (coarse `Bash`→`"system"` mapping, no real tool identity)
+  and is now correct again now that the GitHub classifier makes `connector`/
+  `tool` meaningful and consistently derived.
+- **`github_classifier.py`**: the first (and so far only) per-connector
+  classifier, turning a raw `Bash` command into `(bucket, connector, tool)`
+  when it's a `git` invocation — `status`/`log`/`diff`/etc. → `read`,
+  `push` → `publish`, anything else recognized or not → `create` (unknown
+  verbs default to the risk-bearing bucket, not the safe one, per §1). A
+  compound command (`git add . && git commit && git push`) is classified by
+  its single riskiest verb. Adding a classifier for another connector is
+  the only change needed to extend this pattern — `check_permission`'s
+  specificity model and the ask/answer mechanism don't change at all.

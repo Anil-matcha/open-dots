@@ -50,16 +50,13 @@ async def test_answer_ask_allow_updates_ask_and_resumes_task(
     assert task.status == "running"
 
 
-async def test_answer_ask_always_writes_permission_rule(
+async def test_answer_ask_always_writes_bucket_level_rule_when_uncl_classified(
     db_session: AsyncSession, user_id: str
 ) -> None:
-    # tool/connector are set on the ask (for display in the notification),
-    # but the hook only ever checks by bucket (no connector concept exists
-    # yet) — so the written rule must be bucket-level, matching that.
+    # No connector/tool given (the coarse path — Write, Edit, plain Bash):
+    # the written rule must be bucket-level, matching a bucket-only lookup.
     task = await _add_task(db_session, user_id)
-    ask = await create_ask(
-        db_session, user_id, bucket="create", task_id=task.id, tool="Write"
-    )
+    ask = await create_ask(db_session, user_id, bucket="create", task_id=task.id)
 
     await answer_ask(db_session, ask.id, decision="allow", always=True)
 
@@ -74,10 +71,38 @@ async def test_answer_ask_always_writes_permission_rule(
     rule = result.scalar_one()
     assert rule.decision == "allow"
 
-    # The regression this guards against: a later bucket-only lookup (what
-    # the hook actually does) must now find this rule.
     decision = await check_permission(db_session, user_id, bucket="create")
     assert decision == "allow"
+
+
+async def test_answer_ask_always_writes_tool_level_rule_when_classified(
+    db_session: AsyncSession, user_id: str
+) -> None:
+    # A classified action (e.g. a git push) always derives the same
+    # connector/tool, so "always allow" can and should be scoped that
+    # specifically — it must not also allow unrelated actions in the bucket.
+    task = await _add_task(db_session, user_id)
+    ask = await create_ask(
+        db_session,
+        user_id,
+        bucket="publish",
+        task_id=task.id,
+        connector="github",
+        tool="git.push",
+    )
+
+    await answer_ask(db_session, ask.id, decision="allow", always=True)
+
+    decision = await check_permission(
+        db_session, user_id, bucket="publish", connector="github", tool="git.push"
+    )
+    assert decision == "allow"
+
+    # A different tool under the same connector/bucket is still unaffected.
+    decision = await check_permission(
+        db_session, user_id, bucket="publish", connector="github", tool="git.force-push"
+    )
+    assert decision == "ask"
 
 
 async def test_answer_ask_without_always_writes_no_permission_rule(

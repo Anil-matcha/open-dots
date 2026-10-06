@@ -69,6 +69,12 @@ The web UI covers the same ground from a browser:
 - A Telegram bot token from [@BotFather](https://t.me/BotFather) (only
   needed if you want to run the bot, or let people link the web UI to
   Telegram — the web UI's guest mode works without it)
+- A public URL the sandbox can reach to call back into your backend for
+  permission decisions (see [Permission prompts](#permission-prompts)) — in
+  local dev this means tunneling your backend with
+  [ngrok](https://ngrok.com/) or similar; not needed to run the app, only
+  for any task that triggers a risky action (writing files, shell commands,
+  etc.) to actually get a decision instead of hanging until it times out.
 
 ## Setup
 
@@ -87,6 +93,8 @@ Fill in `backend/.env`:
 | `TELEGRAM_BOT_TOKEN` | only for the bot / Telegram linking | From @BotFather. |
 | `TELEGRAM_BOT_USERNAME` | no | Your bot's `@username` (no `@`), shown as a clickable link in the web UI. Cosmetic only. |
 | `FRONTEND_ORIGINS` | no | Comma-separated origins allowed to call the API from a browser. Defaults to `http://localhost:3000`. |
+| `HOOK_TOKEN` | yes | Shared secret the permission hook's caller (the sandbox) must present, so only your backend's own sandboxes can submit permission decisions. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
+| `PERMISSION_HOOK_BASE_URL` | yes | The public URL from the ngrok-or-similar prerequisite above, no trailing slash — e.g. `https://your-tunnel.ngrok-free.app`. Baked into each sandbox's `.claude/settings.json` at task start. |
 | `POSTGRES_*` | no | Defaults match `backend/docker-compose.yml`. |
 
 The web UI (`frontend/`) has its own `.env.example` — `scripts/dev.sh` copies
@@ -194,6 +202,36 @@ captured at creation time. One created from Telegram is always UTC, since
 Telegram gives the bot no way to read the user's timezone — the bot's
 replies always spell out times in UTC.
 
+## Permission prompts
+
+Every risky action the AI attempts inside a sandbox — writing a file,
+running a shell command, a `git push`, etc. — is intercepted by a
+`PermissionRequest` hook before it runs, and checked against a per-user
+rule table (`permission_rule`). No matching rule means the task pauses
+(status `waiting_approval`) and you're asked, in whichever channel you're
+using:
+
+- **Telegram**: a message with **Allow once** / **Always allow** / **Deny**
+  buttons.
+- **Web UI**: the same three choices appear inline on the task once it's
+  expanded, no page navigation needed.
+
+"Always allow" writes a standing rule so the same action doesn't ask again;
+"Allow once"/"Deny" apply only to that one attempt. An unanswered prompt
+times out (110s) to a safe default of deny rather than hanging forever.
+
+Shell (`Bash`) commands get a further pass: a small classifier
+(`app/services/github_classifier.py`) recognizes `git` subcommands and
+scopes the rule to the specific operation (`git status` read-only,
+`git commit` a local change, `git push` a publish) instead of treating every
+shell command the same — so "always allow committing" doesn't also silently
+allow pushing. Everything else run via `Bash`, and any tool without its own
+classifier, falls back to one coarse bucket per tool.
+
+See [GOVERNANCE_ENGINE.md](GOVERNANCE_ENGINE.md) for the full design
+rationale and what's still open (e.g. extending classification to other
+connectors).
+
 ## Project layout
 
 - [backend/](backend) — FastAPI app, Telegram bot, sandbox/auth/task
@@ -213,8 +251,16 @@ replies always spell out times in UTC.
 - Link codes expire after 10 minutes; there's no rate limiting on generating
   them.
 - The web UI has no real authentication — a browser's identity is whatever
-  id (guest or Telegram) it last linked, persisted in `localStorage`.
-- No automated tests yet.
+  id (guest or Telegram) it last linked, persisted in `localStorage`. This
+  also means the permission engine's accumulated rules are only as safe as
+  that identity — see [GOVERNANCE_ENGINE.md](GOVERNANCE_ENGINE.md)'s open
+  decisions.
+- Automated tests exist for the permission engine
+  (`backend/tests/services/`) but not yet for the rest of the app
+  (sandbox/task/schedule services, routers).
+- The `git` command classifier only covers the verbs it explicitly knows
+  about (see `github_classifier.py`); an unrecognized verb defaults to the
+  safer "mutation" bucket rather than being assumed read-only.
 - Schedules poll on a 30s interval, so a run can start up to ~30s after its
   exact due time.
 - A schedule missed by more than 15 minutes (e.g. the API was down) is
