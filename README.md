@@ -1,13 +1,125 @@
-# Vadoo Autonomous Agent
+# Open Dots: Self-Hosted Coding Agent Workspace
 
-FastAPI service ([backend/](backend)) + Telegram bot + web UI
-([frontend/](frontend)) that run coding agent tasks (e.g. Claude Code) inside
-disposable sandboxes provided by [Boat](https://docs.boat.dev).
+Open Dots runs coding-agent tasks such as Claude Code in disposable
+[Boat](https://docs.boat.dev) sandboxes. Use it through a Telegram bot or a
+Next.js web UI; the web UI can link to Telegram or run in guest mode.
 
-Everything works through Telegram alone, or through the web UI once a
-browser session is linked to a Telegram identity (or just as a standalone
-guest, no Telegram required) — see below. Both surfaces share the same
-sandbox and credentials for a given user.
+Both interfaces use the same API, sandbox, and credentials for each user.
+
+<p align="center"><a href="https://youtu.be/b4ZTfs0KwR0" title="Watch the Open Dots demo on YouTube"><img src="https://i.ytimg.com/vi/b4ZTfs0KwR0/maxresdefault.jpg" alt="Open Dots demo video thumbnail — click to watch on YouTube" width="720"></a></p>
+<p align="center"><a href="https://youtu.be/b4ZTfs0KwR0"><b>▶ Watch the Open Dots demo on YouTube</b></a></p>
+
+> **Status:** Prototype / active development. See [Known limitations](#known-limitations) before running it for others.
+
+## Contents
+
+- [What it does](#what-it-does)
+- [Why Open Dots](#why-open-dots)
+- [Quick start](#quick-start)
+- [Using Open Dots](#using-open-dots)
+- [Scheduling tasks](#scheduling-tasks)
+- [Permission prompts](#permission-prompts)
+- [Architecture](#architecture)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
+- [Contributing](#contributing)
+
+## What it does
+
+- Run coding-agent tasks in disposable Boat sandboxes from Telegram or a browser.
+- Connect Claude through its OAuth login flow and optionally connect a user's GitHub account.
+- Ask for approval before risky actions such as file writes, shell commands, and Git pushes.
+- Continue completed tasks in the same Claude conversation from the web UI.
+- Schedule recurring prompts and receive run results in Telegram.
+- Store user credentials encrypted and manage sandbox, task, permission, and schedule records in PostgreSQL.
+
+## Why Open Dots
+
+Open Dots provides one self-hosted interface for coding-agent work from chat or a browser. Tasks run in separate Boat sandboxes, while an approval flow lets users review risky actions and remember per-user rules. The web UI supports guest use without Telegram and can also link to a Telegram identity.
+
+## Quick start
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) for Python dependency management
+- [Node.js](https://nodejs.org/) (18+) and npm, for the web UI
+- [Docker](https://docs.docker.com/get-docker/) (for Postgres)
+- Bash (Git Bash on Windows works fine) to use `scripts/dev.sh`
+- A [Boat](https://docs.boat.dev/api-keys) API key. If it belongs to a
+  personal account that also has an org/team on a paid plan, you also need
+  that org's id (see `BOAT_ORG_ID` below) — otherwise sandbox creation bills
+  the personal account and returns `402 Payment Required`.
+- A Telegram bot token from [@BotFather](https://t.me/BotFather) (only
+  needed if you want to run the bot, or let people link the web UI to
+  Telegram — the web UI's guest mode works without it)
+- A public URL the sandbox can reach to call back into your backend for
+  permission decisions (see [Permission prompts](#permission-prompts)) — in
+  local dev this means tunneling your backend with
+  [ngrok](https://ngrok.com/) or similar; not needed to run the app, only
+  for any task that triggers a risky action (writing files, shell commands,
+  etc.) to actually get a decision instead of hanging until it times out.
+
+### Configure the environment
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+Fill in `backend/.env`:
+
+| Var | Required | Notes |
+|---|---|---|
+| `BOAT_API_KEY` | yes | From the Boat dashboard. |
+| `BOAT_BASE_URL` | no | Defaults to `https://boat.dev/api/v1`. |
+| `BOAT_ORG_ID` | see note above | Team/org id (e.g. `team_...`) to attach to sandbox creation so it bills the org instead of your personal account. |
+| `TOKEN_ENCRYPTION_KEYS` | yes | Fernet key used to encrypt stored credentials. Generate with `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separate multiple keys to support rotation. |
+| `TELEGRAM_BOT_TOKEN` | only for the bot / Telegram linking | From @BotFather. |
+| `TELEGRAM_BOT_USERNAME` | no | Your bot's `@username` (no `@`), shown as a clickable link in the web UI. Cosmetic only. |
+| `FRONTEND_ORIGINS` | no | Comma-separated origins allowed to call the API from a browser. Defaults to `http://localhost:3000`. |
+| `HOOK_TOKEN` | yes | Shared secret the permission hook's caller (the sandbox) must present, so only your backend's own sandboxes can submit permission decisions. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
+| `PERMISSION_HOOK_BASE_URL` | yes | The public URL from the ngrok-or-similar prerequisite above, no trailing slash — e.g. `https://your-tunnel.ngrok-free.app`. Baked into each sandbox's `.claude/settings.json` at task start. |
+| `POSTGRES_*` | no | Defaults match `backend/docker-compose.yml`. |
+
+The web UI (`frontend/`) has its own `.env.example` — `scripts/dev.sh` copies
+it to `.env.local` automatically on first run. Copy it yourself if you're
+running the frontend separately, and point `NEXT_PUBLIC_API_BASE_URL` at the
+backend if you're not using the defaults.
+
+### Start the app
+
+```bash
+./scripts/dev.sh
+```
+
+From the repo root, this starts Postgres via Docker, waits for it to be
+healthy, installs backend and frontend dependencies, runs migrations, and
+starts the FastAPI app (`http://127.0.0.1:8000`, docs at `/docs`), the
+Telegram bot, and the web UI (`http://127.0.0.1:3000`). Ctrl+C stops
+everything it started (Postgres keeps running — `docker compose -f
+backend/docker-compose.yml down` to stop it too).
+
+Skip pieces you don't need:
+
+```bash
+./scripts/dev.sh --no-bot        # API + web UI only
+./scripts/dev.sh --no-frontend   # API + bot only
+```
+
+#### Run the pieces manually
+
+```bash
+cd backend
+docker compose up -d                      # Postgres
+uv sync                                   # install deps
+uv run alembic upgrade head               # migrations
+uv run fastapi dev app/main.py            # API (terminal 1)
+uv run python -m app.telegram_bot         # bot (terminal 2)
+
+cd ../frontend
+npm install && npm run dev                # web UI (terminal 3)
+```
+
+## Using Open Dots
 
 The Telegram bot walks a user through:
 
@@ -56,87 +168,6 @@ The web UI covers the same ground from a browser:
    Schedules are listed below the composer with pause/resume/delete
    controls. See [Scheduling tasks](#scheduling-tasks).
 
-## Prerequisites
-
-- [uv](https://docs.astral.sh/uv/) for Python dependency management
-- [Node.js](https://nodejs.org/) (18+) and npm, for the web UI
-- [Docker](https://docs.docker.com/get-docker/) (for Postgres)
-- Bash (Git Bash on Windows works fine) to use `scripts/dev.sh`
-- A [Boat](https://docs.boat.dev/api-keys) API key. If it belongs to a
-  personal account that also has an org/team on a paid plan, you also need
-  that org's id (see `BOAT_ORG_ID` below) — otherwise sandbox creation bills
-  the personal account and returns `402 Payment Required`.
-- A Telegram bot token from [@BotFather](https://t.me/BotFather) (only
-  needed if you want to run the bot, or let people link the web UI to
-  Telegram — the web UI's guest mode works without it)
-- A public URL the sandbox can reach to call back into your backend for
-  permission decisions (see [Permission prompts](#permission-prompts)) — in
-  local dev this means tunneling your backend with
-  [ngrok](https://ngrok.com/) or similar; not needed to run the app, only
-  for any task that triggers a risky action (writing files, shell commands,
-  etc.) to actually get a decision instead of hanging until it times out.
-
-## Setup
-
-```bash
-cp backend/.env.example backend/.env
-```
-
-Fill in `backend/.env`:
-
-| Var | Required | Notes |
-|---|---|---|
-| `BOAT_API_KEY` | yes | From the Boat dashboard. |
-| `BOAT_BASE_URL` | no | Defaults to `https://boat.dev/api/v1`. |
-| `BOAT_ORG_ID` | see note above | Team/org id (e.g. `team_...`) to attach to sandbox creation so it bills the org instead of your personal account. |
-| `TOKEN_ENCRYPTION_KEYS` | yes | Fernet key used to encrypt stored credentials. Generate with `uv run python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Comma-separate multiple keys to support rotation. |
-| `TELEGRAM_BOT_TOKEN` | only for the bot / Telegram linking | From @BotFather. |
-| `TELEGRAM_BOT_USERNAME` | no | Your bot's `@username` (no `@`), shown as a clickable link in the web UI. Cosmetic only. |
-| `FRONTEND_ORIGINS` | no | Comma-separated origins allowed to call the API from a browser. Defaults to `http://localhost:3000`. |
-| `HOOK_TOKEN` | yes | Shared secret the permission hook's caller (the sandbox) must present, so only your backend's own sandboxes can submit permission decisions. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. |
-| `PERMISSION_HOOK_BASE_URL` | yes | The public URL from the ngrok-or-similar prerequisite above, no trailing slash — e.g. `https://your-tunnel.ngrok-free.app`. Baked into each sandbox's `.claude/settings.json` at task start. |
-| `POSTGRES_*` | no | Defaults match `backend/docker-compose.yml`. |
-
-The web UI (`frontend/`) has its own `.env.example` — `scripts/dev.sh` copies
-it to `.env.local` automatically on first run. Copy it yourself if you're
-running the frontend separately, and point `NEXT_PUBLIC_API_BASE_URL` at the
-backend if you're not using the defaults.
-
-## Running everything
-
-```bash
-./scripts/dev.sh
-```
-
-From the repo root, this starts Postgres via Docker, waits for it to be
-healthy, installs backend and frontend dependencies, runs migrations, and
-starts the FastAPI app (`http://127.0.0.1:8000`, docs at `/docs`), the
-Telegram bot, and the web UI (`http://127.0.0.1:3000`). Ctrl+C stops
-everything it started (Postgres keeps running — `docker compose -f
-backend/docker-compose.yml down` to stop it too).
-
-Skip pieces you don't need:
-
-```bash
-./scripts/dev.sh --no-bot        # API + web UI only
-./scripts/dev.sh --no-frontend   # API + bot only
-```
-
-### Running the pieces manually
-
-```bash
-cd backend
-docker compose up -d                      # Postgres
-uv sync                                   # install deps
-uv run alembic upgrade head               # migrations
-uv run fastapi dev app/main.py            # API (terminal 1)
-uv run python -m app.telegram_bot         # bot (terminal 2)
-
-cd ../frontend
-npm install && npm run dev                # web UI (terminal 3)
-```
-
-## Trying it out
 
 In Telegram:
 
@@ -231,6 +262,16 @@ classifier, falls back to one coarse bucket per tool.
 Extending classification to other connectors (beyond `git`) is still open;
 contributions welcome.
 
+## Architecture
+
+```text
+Telegram bot ─┐
+              ├── FastAPI backend ── PostgreSQL
+Next.js web UI┘          ├── Boat disposable sandboxes
+                         ├── permission prompts and rules
+                         └── task and schedule services
+```
+
 ## Project layout
 
 - [backend/](backend) — FastAPI app, Telegram bot, sandbox/auth/task
@@ -264,3 +305,9 @@ contributions welcome.
 - Scheduled-run notifications only reach Telegram-linked users (a numeric
   `user_id`) and only if `TELEGRAM_BOT_TOKEN` is set — a web-only guest has
   no chat to message and only sees outcomes in the UI's schedules list.
+
+## Contributing
+
+Issues and pull requests are welcome. Keep the README aligned with the
+backend and frontend behavior, and include focused tests when changing
+services or API behavior.
