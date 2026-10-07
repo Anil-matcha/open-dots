@@ -1,8 +1,9 @@
 # Open Dots: Self-Hosted Coding Agent Workspace
 
-Open Dots runs coding-agent tasks such as Claude Code in disposable
-[Boat](https://docs.boat.dev) sandboxes. Use it through a Telegram bot or a
-Next.js web UI; the web UI can link to Telegram or run in guest mode.
+Open Dots runs coding-agent tasks such as Claude Code from Telegram or a
+Next.js web UI. Tasks run in disposable sandboxes, with approvals for risky
+actions and support for recurring prompts. The web UI can link to Telegram
+or run in guest mode.
 
 Both interfaces use the same API, sandbox, and credentials for each user.
 
@@ -26,7 +27,7 @@ Both interfaces use the same API, sandbox, and credentials for each user.
 
 ## What it does
 
-- Run coding-agent tasks in disposable Boat sandboxes from Telegram or a browser.
+- Run coding-agent tasks in disposable sandboxes from Telegram or a browser.
 - Connect Claude through its OAuth login flow and optionally connect a user's GitHub account.
 - Ask for approval before risky actions such as file writes, shell commands, and Git pushes.
 - Continue completed tasks in the same Claude conversation from the web UI.
@@ -35,7 +36,7 @@ Both interfaces use the same API, sandbox, and credentials for each user.
 
 ## Why Open Dots
 
-Open Dots provides one self-hosted interface for coding-agent work from chat or a browser. Tasks run in separate Boat sandboxes, while an approval flow lets users review risky actions and remember per-user rules. The web UI supports guest use without Telegram and can also link to a Telegram identity.
+Open Dots provides one interface for coding-agent work from chat or a browser. An approval flow lets users review risky actions and remember per-user rules. The web UI supports guest use without Telegram and can also link to a Telegram identity.
 
 ## Quick start
 
@@ -45,8 +46,9 @@ Open Dots provides one self-hosted interface for coding-agent work from chat or 
 - [Node.js](https://nodejs.org/) (18+) and npm, for the web UI
 - [Docker](https://docs.docker.com/get-docker/) (for Postgres)
 - Bash (Git Bash on Windows works fine) to use `scripts/dev.sh`
-- A [Boat](https://docs.boat.dev/api-keys) API key. If it belongs to a
-  personal account that also has an org/team on a paid plan, you also need
+- A [Boat API key](https://docs.boat.dev/api-keys) for sandbox creation. If
+  it belongs to a personal account that also has an org/team on a paid plan,
+  you also need
   that org's id (see `BOAT_ORG_ID` below) — otherwise sandbox creation bills
   the personal account and returns `402 Payment Required`.
 - A Telegram bot token from [@BotFather](https://t.me/BotFather) (only
@@ -267,7 +269,7 @@ contributions welcome.
 ```text
 Telegram bot ─┐
               ├── FastAPI backend ── PostgreSQL
-Next.js web UI┘          ├── Boat disposable sandboxes
+Next.js web UI┘          ├── disposable sandboxes (Boat provider)
                          ├── permission prompts and rules
                          └── task and schedule services
 ```
