@@ -236,6 +236,14 @@ async def start_task(db: AsyncSession, task_id: int) -> Tasks:
         except CredentialNotFoundError:
             pass
         await _write_permission_hook_config(task.box_id, task.user_id, task.id)
+    except ApiException as exc:
+        error = BoxCommandError(
+            f"Could not prepare box {task.box_id}: {exc.status} {exc.reason}"
+        )
+        task.status = "failed"
+        task.error = str(error)
+        await db.commit()
+        raise error from exc
     except START_ERRORS as exc:
         task.status = "failed"
         task.error = str(exc)
