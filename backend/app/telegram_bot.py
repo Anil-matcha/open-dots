@@ -4,6 +4,7 @@ import re
 
 from fastapi.concurrency import run_in_threadpool
 from telegram import Update
+from telegram.constants import MessageLimit
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -216,11 +217,18 @@ async def _poll_task(bot, chat_id: int, task_id: int) -> None:
             task = await task_execution_service.sync_task_status(db, task)
 
     if task is None:
-        await bot.send_message(chat_id=chat_id, text="Task disappeared unexpectedly.")
+        message = "Task disappeared unexpectedly."
     elif task.status == "succeeded":
-        await bot.send_message(chat_id=chat_id, text=task.result or "Task completed.")
+        message = task.result or "Task completed."
     else:
-        await bot.send_message(chat_id=chat_id, text=f"Task failed: {task.error}")
+        message = f"Task failed: {task.error}"
+
+    # Reports and CLI errors can exceed Telegram's per-message text limit.
+    # Send every part in order rather than losing the entire completion.
+    for start in range(0, len(message), MessageLimit.MAX_TEXT_LENGTH):
+        await bot.send_message(
+            chat_id=chat_id, text=message[start:start + MessageLimit.MAX_TEXT_LENGTH]
+        )
 
 
 async def permission_ask_callback_handler(
