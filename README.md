@@ -228,9 +228,8 @@ shell command the same — so "always allow committing" doesn't also silently
 allow pushing. Everything else run via `Bash`, and any tool without its own
 classifier, falls back to one coarse bucket per tool.
 
-See [GOVERNANCE_ENGINE.md](GOVERNANCE_ENGINE.md) for the full design
-rationale and what's still open (e.g. extending classification to other
-connectors).
+Extending classification to other connectors (beyond `git`) is still open;
+contributions welcome.
 
 ## Project layout
 
@@ -253,8 +252,7 @@ connectors).
 - The web UI has no real authentication — a browser's identity is whatever
   id (guest or Telegram) it last linked, persisted in `localStorage`. This
   also means the permission engine's accumulated rules are only as safe as
-  that identity — see [GOVERNANCE_ENGINE.md](GOVERNANCE_ENGINE.md)'s open
-  decisions.
+  that identity.
 - Automated tests exist for the permission engine
   (`backend/tests/services/`) but not yet for the rest of the app
   (sandbox/task/schedule services, routers).
