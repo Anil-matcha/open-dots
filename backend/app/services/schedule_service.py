@@ -1,6 +1,8 @@
+import re
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from apscheduler.triggers.combining import OrTrigger
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
@@ -52,13 +54,46 @@ class ScheduleInactiveError(Exception):
     pass
 
 
+def _crontab_trigger(expression: str, timezone: ZoneInfo) -> CronTrigger | OrTrigger:
+    # Validate with APScheduler first, retaining the existing accepted syntax.
+    CronTrigger.from_crontab(expression, timezone=timezone)
+    minute, hour, day, month, weekday = expression.split()
+
+    # Standard crontab and our UI/Telegram presets use Sunday=0, whereas
+    # APScheduler 3 uses Monday=0. Expand numeric ranges before translating:
+    # rotating range endpoints would turn 0-6 into the invalid range sun-sat.
+    names = ("sun", "mon", "tue", "wed", "thu", "fri", "sat")
+    translated = []
+    for part in weekday.split(","):
+        match = re.fullmatch(r"(\*|\d+)(?:-(\d+))?(?:/(\d+))?", part)
+        if part == "*" or match is None:
+            translated.append(part)
+            continue
+        first, last, step = match.groups()
+        start = 0 if first == "*" else int(first)
+        end = int(last) if last is not None else (6 if step or first == "*" else start)
+        translated.extend(names[value] for value in range(start, end + 1, int(step or 1)))
+
+    weekday_expression = ",".join(translated)
+    if not day.startswith("*") and not weekday.startswith("*"):
+        # Crontab runs when either restricted day field matches. APScheduler
+        # intersects all fields, so keep these two alternatives separate.
+        return OrTrigger([
+            CronTrigger.from_crontab(f"{minute} {hour} {day} {month} *", timezone=timezone),
+            CronTrigger.from_crontab(f"{minute} {hour} * {month} {weekday_expression}", timezone=timezone),
+        ])
+    return CronTrigger.from_crontab(
+        f"{minute} {hour} {day} {month} {weekday_expression}", timezone=timezone
+    )
+
+
 def compute_next_run(cron_expression: str, timezone: str, after: datetime) -> datetime:
     try:
         tz = ZoneInfo(timezone)
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise InvalidScheduleError(f"Unknown timezone: {timezone}") from exc
     try:
-        trigger = CronTrigger.from_crontab(cron_expression, timezone=tz)
+        trigger = _crontab_trigger(cron_expression, tz)
     except ValueError as exc:
         raise InvalidScheduleError(
             f"Invalid cron expression {cron_expression!r}: {exc}"
