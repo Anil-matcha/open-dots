@@ -66,21 +66,10 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def _get_or_create_sandbox(user_id: str) -> str:
     async with AsyncSessionLocal() as db:
-        sandbox = await user_sandbox_service.get_active_by_user_id(db, user_id)
-        if sandbox is not None:
-            return sandbox.box_id
-
-        box = await run_in_threadpool(ascii_box_service.create_box, DEFAULT_TTL_SECONDS)
-        sandbox = await user_sandbox_service.create(
-            db,
-            user_id=user_id,
-            box_id=box.id,
-            state=box.state,
-            machine_type=box.type,
-            ttl_seconds=DEFAULT_TTL_SECONDS,
+        _, box = await user_sandbox_service.ensure(
+            db, user_id=user_id, ttl_seconds=DEFAULT_TTL_SECONDS
         )
-        return sandbox.box_id
-
+        return box.id
 
 async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = str(update.effective_user.id)
