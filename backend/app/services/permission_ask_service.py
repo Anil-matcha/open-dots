@@ -178,6 +178,8 @@ async def poll_for_answer(
         elapsed += interval_seconds
 
     ask = await _reload_ask(db, ask_id)
+    if ask is not None and ask.status == "answered":
+        return cast(AskDecision, ask.decision)
     if ask is not None and ask.status == "pending":
         ask.status = "expired"
         await _resume_task(db, ask.task_id)
