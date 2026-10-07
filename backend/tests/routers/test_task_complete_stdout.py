@@ -1,0 +1,133 @@
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
+from app.core.config import settings
+from app.db.session import get_db
+from app.routers.task import router
+from app.services import task_execution_service
+
+
+@pytest.fixture
+def boat_api():
+    state = {
+        "stdout": "", "truncated": False, "running": False,
+        "read_error": False, "log_reads": 0,
+    }
+    log_path = "/tmp/boat-process-1.stdout.log"
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def respond(self, status, payload):
+            body = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def error(self, status):
+            self.respond(status, {
+                "ok": False, "type": "error", "status": status,
+                "code": "owned", "message": "owned fixture", "requestId": "owned",
+                "error": {"code": "owned", "message": "owned fixture"},
+            })
+
+        def do_GET(self):
+            parsed = urlsplit(self.path)
+            if parsed.path.endswith("/commands/1"):
+                self.respond(200, {
+                    "ok": True, "type": "command.status", "success": True,
+                    "processId": 1, "status": "running" if state["running"] else "exited",
+                    "running": state["running"],
+                    "exitCode": None if state["running"] else 0,
+                    "stdout": state["stdout"][-4096:] if state["truncated"] else state["stdout"],
+                    "stderr": "", "stdoutTruncated": state["truncated"],
+                    "logPath": log_path,
+                })
+            elif parsed.path.endswith("/files"):
+                path = parse_qs(parsed.query)["path"][0]
+                if path != log_path:
+                    # The normal credential-renewal lookup has no fixture file.
+                    self.error(404)
+                    return
+                state["log_reads"] += 1
+                if state["read_error"]:
+                    self.error(503)
+                else:
+                    self.respond(200, {
+                        "ok": True, "type": "file.read", "success": True,
+                        "path": path, "encoding": "utf8",
+                        "size": len(state["stdout"].encode()), "content": state["stdout"],
+                    })
+            else:
+                raise AssertionError(self.path)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", state
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+
+
+@pytest.mark.parametrize(
+    "truncated, is_error, running, read_error",
+    [
+        (True, False, False, False),
+        (True, True, False, False),
+        (False, False, False, False),
+        (True, False, True, False),
+        (True, False, False, True),
+    ],
+    ids=["complete-success", "complete-error", "short-control", "running-control", "read-error"],
+)
+async def test_completed_task_uses_full_log(
+    db_session, user_id, monkeypatch, boat_api,
+    truncated, is_error, running, read_error,
+):
+    report = "report \u2014 " * 1000 if truncated else "short report"
+    base_url, state = boat_api
+    state.update(
+        stdout=json.dumps({"type": "result", "is_error": is_error, "result": report}),
+        truncated=truncated, running=running, read_error=read_error,
+    )
+    monkeypatch.setattr(settings, "BOAT_BASE_URL", base_url)
+    task = await task_execution_service.create_task(
+        db_session, user_id=user_id, provider="claude", box_id="bx_abcdefgh",
+        prompt_text="produce a report",
+    )
+    task.status = "running"
+    task.prompt_id = "1"
+    await db_session.commit()
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_db] = lambda: db_session
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://owned"
+    ) as client:
+        response = await client.get(f"/api/v1/tasks/{task.id}")
+    assert response.status_code == 200
+    payload = response.json()
+    if running:
+        assert payload["status"] == "running"
+        assert state["log_reads"] == 0
+    elif read_error:
+        assert payload["status"] == "failed"
+        assert "503" in payload["error"]
+        assert state["log_reads"] == 1
+    else:
+        assert payload["status"] == ("failed" if is_error else "succeeded")
+        assert payload["error" if is_error else "result"] == report
+        assert state["log_reads"] == int(truncated)

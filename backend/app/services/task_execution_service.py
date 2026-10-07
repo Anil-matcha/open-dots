@@ -319,6 +319,16 @@ async def sync_task_status(db: AsyncSession, task: Tasks) -> Tasks:
         run_status = await run_in_threadpool(
             ascii_box_service.command_status, task.box_id, int(task.prompt_id)
         )
+        stdout = run_status.stdout
+        if (
+            not run_status.running
+            and run_status.stdout_truncated
+            and run_status.log_path
+        ):
+            output = await run_in_threadpool(
+                ascii_box_service.read_file, task.box_id, run_status.log_path
+            )
+            stdout = output.content
     except ApiException as exc:
         values = {"status": "failed", "error": f"{exc.status} {exc.reason}"}
     else:
@@ -327,7 +337,7 @@ async def sync_task_status(db: AsyncSession, task: Tasks) -> Tasks:
                 return task
             values = {"status": "running"}
         else:
-            values = _finished_values(run_status.stdout, run_status.stderr)
+            values = _finished_values(stdout, run_status.stderr)
 
     # Conditional on the status we read, so concurrent syncers (API requests,
     # the Telegram bot, background sync on other instances) apply each
