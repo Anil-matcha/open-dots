@@ -244,9 +244,6 @@ contributions welcome.
 
 - Sandboxes are never automatically stopped/deleted — repeated `/connect`
   testing will accumulate them on the Boat account.
-- The bot's own polling loop (5 min) is shorter than the task command
-  timeout (10 min), so a long-running task can appear to "fail" in Telegram
-  before the sandbox actually gives up on it.
 - Link codes expire after 10 minutes; there's no rate limiting on generating
   them.
 - The web UI has no real authentication — a browser's identity is whatever
