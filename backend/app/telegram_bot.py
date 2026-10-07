@@ -43,7 +43,8 @@ PROVIDER = "claude"
 DEFAULT_TTL_SECONDS = 1800
 
 POLL_INTERVAL_SECONDS = 3
-POLL_ATTEMPTS = 100
+# Give commands their full execution budget, plus a final status check.
+POLL_ATTEMPTS = task_execution_service.MAX_TASK_SECONDS // POLL_INTERVAL_SECONDS + 1
 
 # chat_id -> box_id, set while we're waiting for a pasted OAuth code.
 _awaiting_code: dict[int, str] = {}
@@ -219,6 +220,11 @@ async def _poll_task(bot, chat_id: int, task_id: int) -> None:
         await bot.send_message(chat_id=chat_id, text="Task disappeared unexpectedly.")
     elif task.status == "succeeded":
         await bot.send_message(chat_id=chat_id, text=task.result or "Task completed.")
+    elif task.status in task_execution_service.ACTIVE_STATUSES:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=f"Task #{task.id} is still {task.status}. Check its status in the web UI.",
+        )
     else:
         await bot.send_message(chat_id=chat_id, text=f"Task failed: {task.error}")
 
