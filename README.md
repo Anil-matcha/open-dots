@@ -1,9 +1,12 @@
-# Open Dots: Self-Hosted Coding Agent Workspace
+# Open Dots: Open-Source Alternative to Paid AI Agents
 
-Open Dots runs coding-agent tasks such as Claude Code from Telegram or a
-Next.js web UI. Tasks run in disposable sandboxes, with approvals for risky
-actions and support for recurring prompts. The web UI can link to Telegram
-or run in guest mode.
+**Open Dots is an open-source, self-hosted alternative for people exploring
+paid AI agent products such as OpenAI Dots, Meta Muse, Grok Bot, Instinct,
+Manus Cue, Claude Cowork, and ChatGPT agent.** The current prototype focuses
+on coding-agent workflows: run Claude Code tasks from Telegram or the web,
+review risky actions, connect GitHub, and schedule recurring prompts. Its
+features differ from those services; it is not a feature-for-feature
+replacement.
 
 Both interfaces use the same API, sandbox, and credentials for each user.
 
@@ -36,7 +39,7 @@ Both interfaces use the same API, sandbox, and credentials for each user.
 
 ## Why Open Dots
 
-Open Dots provides one interface for coding-agent work from chat or a browser. An approval flow lets users review risky actions and remember per-user rules. The web UI supports guest use without Telegram and can also link to a Telegram identity.
+Open Dots gives individuals and developers an inspectable workspace they can run themselves, with coding tasks, visible approval steps, and local control over the app and its data. The web UI supports guest use without Telegram and can also link to a Telegram identity.
 
 ## Quick start
 
