@@ -87,20 +87,12 @@ async def ensure_sandbox(
     don't have one yet. Lets the web UI and Telegram bot share a sandbox
     for the same (linked) user instead of each spinning up their own.
     """
-    existing = await user_sandbox_service.get_active_by_user_id(db, payload.user_id)
-    if existing is None:
-        return await create_sandbox(payload, db)
-
     try:
-        result = await run_in_threadpool(ascii_box_service.get_box, existing.box_id)
-        box = result.sandbox
-    except ApiException as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"ASCII error: {exc.reason}",
+        record, box = await user_sandbox_service.ensure(
+            db, user_id=payload.user_id, ttl_seconds=payload.ttl_seconds
         )
-
-    record = await user_sandbox_service.update_state(db, existing.box_id, state=box.state)
+    except ApiException as exc:
+        raise HTTPException(status_code=502, detail=f"ASCII error: {exc.reason}") from exc
 
     return SandboxResponse(
         box_id=box.id,
