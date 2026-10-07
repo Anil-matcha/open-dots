@@ -24,7 +24,8 @@ target_metadata = Base.metadata
 
 # Use the sync (psycopg2) driver for migrations, regardless of what's
 # configured in alembic.ini.
-config.set_main_option("sqlalchemy.url", settings.SYNC_DATABASE_URL)
+# ConfigParser uses percent signs for interpolation; preserve URL escapes.
+config.set_main_option("sqlalchemy.url", settings.SYNC_DATABASE_URL.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
