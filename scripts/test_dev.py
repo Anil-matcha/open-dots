@@ -81,7 +81,7 @@ class EnvironmentTests(unittest.TestCase):
         }
         with patch.dict(os.environ, inherited):
             values = dev_env.prepare_environment(self.path)
-        self.assertEqual(values, inherited)
+        self.assertEqual({name: values[name] for name in inherited}, inherited)
         self.assertEqual(self.path.read_bytes(), before)
 
     def test_invalid_existing_encryption_key_is_never_replaced(self):
@@ -126,6 +126,7 @@ class DevelopmentScriptTests(unittest.TestCase):
         for key in (
             *dotenv_values(self.root / "backend" / ".env.example"),
             "BASH_ENV", "ENV", "BASH_VERSION", "SHELLOPTS", "BASHOPTS",
+            "SSL_CERT_FILE", "SSL_CERT_DIR",
         ):
             self.env.pop(key, None)
         self.env.update(
@@ -147,9 +148,11 @@ printf 'uv %s\n' "$*" >> "$TEST_CALL_LOG"
 if [ "$*" = sync ]; then exit "${TEST_SYNC_STATUS:-0}"; fi
 if [ "$1" = run ] && [ "$2" = --no-sync ]; then
   shift 3
+  if [ "$2" = --check-tls ]; then exit "${TEST_TLS_STATUS:-0}"; fi
   exec "$TEST_PYTHON" "$@"
 fi
 if [ "${BOAT_API_KEY+x}" != x ]; then exit 91; fi
+if [ ! -f "$SSL_CERT_FILE" ]; then exit 93; fi
 if [ "${TEST_EXPECTED_BOAT+x}" = x ] && [ "$BOAT_API_KEY" != "$TEST_EXPECTED_BOAT" ]; then exit 92; fi
 if [ "$*" = 'run alembic upgrade head' ]; then exit "${TEST_MIGRATION_STATUS:-0}"; fi
 """)
@@ -290,6 +293,26 @@ printf 'sleep %s\n' "$*" >> "$TEST_CALL_LOG"
         self.assertIn("Postgres did not become healthy in time", result.stderr)
         self.assertEqual(calls.count("docker inspect"), 30)
         self.assertNotIn("uv run alembic", calls)
+        self.assertNotIn("uv run fastapi", calls)
+
+    def test_invalid_ca_bundle_stops_before_postgres(self):
+        self.env["SSL_CERT_FILE"] = str(self.root / "missing-ca.pem")
+        result, calls = self.run_dev()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Set SSL_CERT_FILE", result.stderr)
+        self.assertNotIn("docker compose up", calls)
+        self.assertNotIn("uv run fastapi", calls)
+
+    def test_tls_preflight_runs_only_for_configured_boat_and_stops_on_failure(self):
+        self.env["TEST_TLS_STATUS"] = "1"
+        result, calls = self.run_dev()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("--check-tls", calls)
+        set_key(self.env_file, "BOAT_API_KEY", "fixture-boat")
+        result, calls = self.run_dev()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--check-tls", calls)
+        self.assertNotIn("docker compose up", calls)
         self.assertNotIn("uv run fastapi", calls)
 
     def test_help_and_unknown_option_do_not_start_services(self):

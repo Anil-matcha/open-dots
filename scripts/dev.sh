@@ -81,6 +81,7 @@ echo "==> Preparing local development configuration"
 env_exports="$(uv run --no-sync python "$SCRIPT_DIR/dev-env.py" "$BACKEND_DIR/.env")"
 eval "$env_exports"
 unset env_exports
+echo "==> Using CA certificates from $SSL_CERT_FILE"
 
 if [ "$RUN_BOT" -eq 1 ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   RUN_BOT=0
@@ -91,6 +92,9 @@ if [ -z "${BOAT_API_KEY:-}" ]; then
   # Settings requires this field even when only using the API and web UI.
   export BOAT_API_KEY=""
   echo "==> BOAT_API_KEY is not set. API and web UI can start; sandbox tasks require a Boat API key in backend/.env."
+else
+  echo "==> Checking Boat HTTPS certificates"
+  uv run --no-sync python "$SCRIPT_DIR/dev-env.py" --check-tls
 fi
 
 echo "==> Starting Postgres (docker compose)"

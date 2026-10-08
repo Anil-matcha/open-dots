@@ -6,12 +6,16 @@ on:
       - .github/workflows/dev-start.yml
       - scripts/**
       - backend/.env.example
+      - backend/app/core/config.py
+      - backend/app/services/box_operations.py
   push:
     branches: [main]
     paths:
       - .github/workflows/dev-start.yml
       - scripts/**
       - backend/.env.example
+      - backend/app/core/config.py
+      - backend/app/services/box_operations.py
 
 permissions:
   contents: read
@@ -27,11 +31,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
-      - name: Install test dependencies
-        run: python -m pip install 'cryptography>=50.0.1' 'python-dotenv>=1.2.3'
+      - uses: astral-sh/setup-uv@v10
+      - name: Install locked backend dependencies
+        run: uv sync --project backend --locked
       - name: Check shell syntax
         run: |
           bash -n scripts/dev.sh
           sh -n scripts/dev.sh
       - name: Test development startup
-        run: python -m unittest discover -s scripts -p 'test_*.py' -v
+        run: uv run --project backend --no-sync python -m unittest discover -s scripts -p 'test_*.py' -v
