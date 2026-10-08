@@ -130,6 +130,9 @@ def _finished_values(stdout: str, stderr: str) -> dict:
     except (json.JSONDecodeError, TypeError):
         return {"status": "failed", "error": stderr or stdout}
 
+    if not isinstance(payload, dict):
+        return {"status": "failed", "error": stderr or stdout}
+
     if payload.get("is_error"):
         return {"status": "failed", "error": payload.get("result") or stderr}
     return {"status": "succeeded", "result": payload.get("result")}
