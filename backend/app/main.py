@@ -2,6 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.background import run_every
@@ -9,6 +10,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.routers.router import router as app_router
 from app.services import schedule_service, task_execution_service
+from app.services.box_operations import BoatConfigurationError
 
 BACKGROUND_INTERVAL_SECONDS = 30
 
@@ -37,6 +39,12 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(BoatConfigurationError)
+async def missing_boat_configuration(request, exc: BoatConfigurationError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
 
 app.add_middleware(
     CORSMiddleware,

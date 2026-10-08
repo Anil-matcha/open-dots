@@ -7,6 +7,7 @@ on:
       - scripts/**
       - backend/.env.example
       - backend/app/core/config.py
+      - backend/app/main.py
       - backend/app/services/box_operations.py
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - scripts/**
       - backend/.env.example
       - backend/app/core/config.py
+      - backend/app/main.py
       - backend/app/services/box_operations.py
 
 permissions:

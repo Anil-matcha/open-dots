@@ -214,6 +214,40 @@ with ApiClient(configuration) as client:
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_missing_boat_key_returns_actionable_error_without_network_calls(self):
+        (self.root / ".env").write_text(f"SSL_CERT_FILE='{self.ca_file}'\n")
+        environment = {
+            "PYTHONPATH": str(Path(__file__).resolve().parent.parent / "backend"),
+            "BOAT_API_KEY": "",
+            "TOKEN_ENCRYPTION_KEYS": Fernet.generate_key().decode(),
+            "HOOK_TOKEN": "fixture",
+            "PERMISSION_HOOK_BASE_URL": "http://localhost:8000",
+        }
+        code = """
+from unittest.mock import AsyncMock, patch
+from fastapi.testclient import TestClient
+from app.main import app
+from app.db.session import get_db
+database = AsyncMock()
+async def fake_db():
+    return database
+app.dependency_overrides[get_db] = fake_db
+with patch('app.services.box_operations.ApiClient') as remote, \
+     patch('app.services.user_sandbox_service.get_active_by_user_id', new=AsyncMock(return_value=None)):
+    client = TestClient(app)
+    for path in ('/api/v1/sandboxes', '/api/v1/sandboxes/ensure'):
+        response = client.post(path, json={'user_id': 'fixture-user'})
+        assert response.status_code == 503, response.text
+        assert 'BOAT_API_KEY' in response.json()['detail']
+        assert 'restart' in response.json()['detail']
+    remote.assert_not_called()
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=self.root, env=environment, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

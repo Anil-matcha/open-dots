@@ -87,7 +87,8 @@ Open Dots gives individuals and developers an inspectable workspace they can run
   from your administrator and include it in the bundle selected by
   `SSL_CERT_FILE` (export it in your shell or set it in `backend/.env`).
 - Starts the API and web UI without a Boat key, and skips the Telegram bot when
-  its token is missing. Sandbox tasks require a real Boat API key.
+  its token is missing. Sandbox tasks require a real Boat API key. Without one,
+  sandbox requests return HTTP 503 with setup instructions and make no Boat calls.
 - Copies `frontend/.env.example` to `.env.local` when needed.
 
 Add external credentials to `backend/.env` when you need those integrations.
