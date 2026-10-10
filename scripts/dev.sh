@@ -114,7 +114,9 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     (cd "$FRONTEND_DIR" && npm install)
   fi
   echo "==> Starting web UI on http://127.0.0.1:3000"
-  (cd "$FRONTEND_DIR" && npm run dev) &
+  # Replace the subshell so its PID remains the frontend process-group leader.
+  # Otherwise cleanup can kill the shell while its npm child is still starting.
+  (cd "$FRONTEND_DIR" && exec npm run dev) &
   pids+=("$!")
 else
   echo "==> Skipping web UI (--no-frontend)"

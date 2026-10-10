@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 import shutil
+import select
+import time
 import signal
 import subprocess
 import tempfile
@@ -12,7 +14,7 @@ SOURCE = Path(__file__).resolve().parent / "dev.sh"
 
 class DevelopmentSupervisorTests(unittest.TestCase):
     def test_service_failures_stop_the_launcher(self):
-        for failed, service_exit in (("api", 7), ("bot", 7), ("frontend", 7), ("api", 0)):
+        for failed, service_exit in (("api", 7), ("bot", 7), ("frontend", 7), ("api", 0), ("none", 143)):
             with self.subTest(service=failed, exit_code=service_exit), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 for folder in ("scripts", "backend", "frontend/node_modules", "bin"):
@@ -38,18 +40,35 @@ class DevelopmentSupervisorTests(unittest.TestCase):
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                         text=True, start_new_session=True)
                 try:
+                    if failed == "none":
+                        deadline, captured = time.monotonic() + 4, b""
+                        while b"Everything is up" not in captured:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0 or not select.select([proc.stdout], [], [], remaining)[0]:
+                                self.fail("stack never reached running state")
+                            chunk = os.read(proc.stdout.fileno(), 4096)
+                            if not chunk:
+                                self.fail("launcher exited before the running state")
+                            captured += chunk
+                        proc.send_signal(signal.SIGTERM)
                     try:
                         output, _ = proc.communicate(timeout=4)
                     except subprocess.TimeoutExpired:
                         self.fail(f"launcher ignored the exited {failed} service")
                     self.assertEqual(proc.returncode, service_exit or 1, output)
-                    self.assertIn("exited", output)
+                    self.assertIn("Shutting down" if failed == "none" else "exited", output)
                 finally:
                     # Kill only this owned fixture's process group, including baseline orphans.
-                    try:
+                    snapshot = subprocess.check_output(["ps", "-Ao", "pid=,command="], text=True)
+                    for line in snapshot.splitlines():
+                        parts = line.strip().split(None, 1)
+                        if len(parts) == 2 and parts[1].startswith("bash " + str(root / "bin") + "/"):
+                            try:
+                                os.kill(int(parts[0]), signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                    if proc.poll() is None:
                         os.killpg(proc.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
                     proc.communicate()
 
 
