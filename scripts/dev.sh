@@ -48,6 +48,8 @@ set +a
 missing=()
 [ -z "${BOAT_API_KEY:-}" ] && missing+=("BOAT_API_KEY")
 [ -z "${TOKEN_ENCRYPTION_KEYS:-}" ] && missing+=("TOKEN_ENCRYPTION_KEYS")
+[ -z "${HOOK_TOKEN:-}" ] && missing+=("HOOK_TOKEN")
+[ -z "${PERMISSION_HOOK_BASE_URL:-}" ] && missing+=("PERMISSION_HOOK_BASE_URL")
 if [ "$RUN_BOT" -eq 1 ] && [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
   missing+=("TELEGRAM_BOT_TOKEN (or rerun with --no-bot)")
 fi
