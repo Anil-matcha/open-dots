@@ -336,6 +336,13 @@ async def sync_task_status(db: AsyncSession, task: Tasks) -> Tasks:
             if task.status == "running":
                 return task
             values = {"status": "running"}
+        elif run_status.exit_code not in (None, 0) or run_status.signal:
+            termination = (
+                f"Process terminated by {run_status.signal}"
+                if run_status.signal
+                else f"Process exited with code {run_status.exit_code}"
+            )
+            values = {"status": "failed", "error": run_status.stderr or termination}
         else:
             values = _finished_values(stdout, run_status.stderr)
 
