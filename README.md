@@ -46,7 +46,7 @@ Open Dots gives individuals and developers an inspectable workspace they can run
 ### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) for Python dependency management
-- [Node.js](https://nodejs.org/) (18+) and npm, for the web UI
+- [Node.js](https://nodejs.org/) (20.9+) and npm, for the web UI (required by Next.js 16)
 - [Docker](https://docs.docker.com/get-docker/) (for Postgres)
 - Bash (Git Bash on Windows works fine) to use `scripts/dev.sh`
 - A [Boat API key](https://docs.boat.dev/api-keys) for sandbox creation. If
