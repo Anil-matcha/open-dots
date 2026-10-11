@@ -81,15 +81,19 @@ uv sync
 echo "==> Running migrations (alembic upgrade head)"
 uv run alembic upgrade head
 
+# Give each service its own process group, including reloaders/npm children.
+set -m
 pids=()
 cleanup() {
   echo
   echo "==> Shutting down"
   for pid in "${pids[@]}"; do
-    kill "$pid" 2>/dev/null || true
+    kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
   done
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "==> Starting FastAPI app on http://127.0.0.1:8000"
 uv run fastapi dev app/main.py --host 127.0.0.1 --port 8000 &
@@ -112,11 +116,29 @@ if [ "$RUN_FRONTEND" -eq 1 ]; then
     (cd "$FRONTEND_DIR" && npm install)
   fi
   echo "==> Starting web UI on http://127.0.0.1:3000"
-  (cd "$FRONTEND_DIR" && npm run dev) &
+  # Replace the subshell so its PID remains the frontend process-group leader.
+  # Otherwise cleanup can kill the shell while its npm child is still starting.
+  (cd "$FRONTEND_DIR" && exec npm run dev) &
   pids+=("$!")
 else
   echo "==> Skipping web UI (--no-frontend)"
 fi
 
 echo "==> Everything is up. Press Ctrl+C to stop."
-wait
+# Plain `wait` ignores an individual service failure while siblings keep
+# running, and ultimately discards their exit statuses. Monitor each child
+# with Bash 3-compatible primitives so a failed stack stops promptly.
+while true; do
+  for pid in "${pids[@]}"; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      if wait "$pid"; then
+        status=1 # Even a normal exit is unexpected for a development server.
+      else
+        status=$?
+      fi
+      echo "Development service (PID $pid) exited; stopping the stack." >&2
+      exit "$status"
+    fi
+  done
+  sleep 1
+done
