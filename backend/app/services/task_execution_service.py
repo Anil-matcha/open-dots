@@ -209,6 +209,31 @@ async def create_task(
             )
         session_id = parent.session_id
 
+        # Replies through different finished ancestors still continue the
+        # same conversation. Lock its first task until the queued reply is
+        # committed, so separate API workers cannot both admit a reply.
+        await db.execute(
+            select(Tasks.id)
+            .where(Tasks.session_id == session_id)
+            .order_by(Tasks.id)
+            .limit(1)
+            .with_for_update()
+        )
+        active = (
+            await db.execute(
+                select(Tasks.id, Tasks.status)
+                .where(
+                    Tasks.session_id == session_id,
+                    Tasks.status.in_(ACTIVE_STATUSES),
+                )
+                .limit(1)
+            )
+        ).first()
+        if active is not None:
+            raise ParentTaskActiveError(
+                f"Task {active.id} is still {active.status} — wait for it to finish first"
+            )
+
     task = Tasks(
         user_id=user_id,
         provider=provider,
