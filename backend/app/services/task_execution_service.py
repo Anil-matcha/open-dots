@@ -120,6 +120,20 @@ def _build_command(
     if template is None:
         raise UnsupportedProviderError(f"Unsupported provider: {provider}")
     base = template.format(prompt=shlex.quote(prompt_text))
+    if provider == "claude" and settings.PARALLEL_SEARCH_ENABLED:
+        # Per-invocation config keeps saved MCP servers and credentials intact.
+        mcp_config = {
+            "mcpServers": {
+                "open-dots-parallel-search": {
+                    "type": "http",
+                    "url": "https://search.parallel.ai/mcp",
+                    "headers": {
+                        "User-Agent": "OpenDots/0.1 (+https://github.com/Anil-matcha/open-dots)"
+                    },
+                }
+            }
+        }
+        base += f" --mcp-config {shlex.quote(json.dumps(mcp_config))}"
     flag = "--resume" if resume else "--session-id"
     return f"{base} {flag} {shlex.quote(session_id)}"
 
