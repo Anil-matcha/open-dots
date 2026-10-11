@@ -6,11 +6,13 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 import pytest
 from fastapi import FastAPI
+from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.db.session import get_db
 from app.routers.task import router
-from app.services import task_execution_service
+from app.services import permission_ask_service, task_execution_service
+from app.services.box_operations import ascii_box_service
 
 
 @pytest.fixture
@@ -131,3 +133,66 @@ async def test_completed_task_uses_full_log(
         assert payload["status"] == ("failed" if is_error else "succeeded")
         assert payload["error" if is_error else "result"] == report
         assert state["log_reads"] == int(truncated)
+
+
+@pytest.mark.parametrize(
+    "running, is_error",
+    [(False, False), (False, True), (True, False)],
+    ids=["finished-success", "finished-error", "live-approval-control"],
+)
+async def test_waiting_approval_observes_finished_command(
+    db_session, user_id, monkeypatch, boat_api, running, is_error,
+):
+    # Persist the state left behind when a request-local permission poll is gone.
+    # This is a recovery-state fixture, not a claim of a process restart.
+    report = "owned completed approval task"
+    base_url, state = boat_api
+    state.update(
+        stdout=json.dumps({"type": "result", "is_error": is_error, "result": report}),
+        truncated=False, running=running,
+    )
+    monkeypatch.setattr(settings, "BOAT_BASE_URL", base_url)
+    task = await task_execution_service.create_task(
+        db_session, user_id=user_id, provider="claude", box_id="bx_abcdefgh",
+        prompt_text="produce a report requiring approval",
+    )
+    task.status = "running"
+    task.prompt_id = "1"
+    await db_session.commit()
+    ask = await permission_ask_service.create_ask(
+        db_session, user_id, bucket="system", task_id=task.id,
+    )
+    await db_session.refresh(task)
+    assert task.status == "waiting_approval"
+    assert ask.status == "pending"
+    assert ask.decision is None
+
+    # Admit the producer through the installed SDK over the owned TCP fixture
+    # before checking the public application's result. No production sync helper
+    # supplies the expected status.
+    command = await run_in_threadpool(
+        ascii_box_service.command_status, task.box_id, int(task.prompt_id),
+    )
+    assert command.running is running
+    assert command.stdout == state["stdout"]
+    assert not command.stdout_truncated
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    app.dependency_overrides[get_db] = lambda: db_session
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://owned"
+    ) as client:
+        response = await client.get(f"/api/v1/tasks/{task.id}")
+    assert response.status_code == 200
+    payload = response.json()
+    await db_session.refresh(ask)
+    assert ask.decision != "allow"  # Observing a process exit never grants a tool action.
+    if running:
+        assert payload["status"] == "waiting_approval"
+        assert ask.status == "pending"
+        assert ask.decision is None
+    else:
+        assert payload["status"] == ("failed" if is_error else "succeeded")
+        assert payload["error" if is_error else "result"] == report
+    assert state["log_reads"] == 0
