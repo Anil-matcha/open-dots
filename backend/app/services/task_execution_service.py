@@ -159,11 +159,16 @@ async def _reload(db: AsyncSession, task_id: int) -> Tasks:
 
 
 async def _is_resume(db: AsyncSession, task: Tasks) -> bool:
-    # A reply shares its session with an earlier task; the first task of a
-    # session creates it with --session-id, later ones --resume it.
+    # Use a recorded process id as evidence of an earlier launch. A task
+    # that failed during setup has no session to resume, so its reply still
+    # needs --session-id.
     result = await db.execute(
         select(
-            exists().where(Tasks.session_id == task.session_id, Tasks.id < task.id)
+            exists().where(
+                Tasks.session_id == task.session_id,
+                Tasks.id < task.id,
+                Tasks.prompt_id.is_not(None),
+            )
         )
     )
     return bool(result.scalar())
